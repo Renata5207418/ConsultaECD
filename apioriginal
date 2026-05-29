@@ -1,0 +1,460 @@
+# Primeiro codigo, so rodando em backend com uma planilha de base na raiz do projeto.
+
+import argparse
+import html
+import re
+import time
+import xml.etree.ElementTree as ET
+from copy import copy
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import requests
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+
+# ============================================================
+# CONFIGURAÇÕES RECEITANETBX
+# ============================================================
+
+ENDPOINT = "http://127.0.0.1:2443/services/ReceitanetBX"
+
+PERFIL = "proc"
+SISTEMA = "SPED Contábil"
+TIPO_ARQUIVO = "Escrituração Contábil Digital"
+TIPO_PESQUISA = "Por Período da Escrituração"
+
+PASTA_SAIDA = Path("resultado_receitanetbx")
+PASTA_SAIDA.mkdir(exist_ok=True)
+
+
+# ============================================================
+# UTILITÁRIOS
+# ============================================================
+
+def normalizar_texto(valor: str) -> str:
+    if valor is None:
+        return ""
+
+    texto = str(valor).strip().lower()
+
+    substituicoes = {
+        "á": "a", "à": "a", "ã": "a", "â": "a",
+        "é": "e", "ê": "e",
+        "í": "i",
+        "ó": "o", "õ": "o", "ô": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+
+    for antigo, novo in substituicoes.items():
+        texto = texto.replace(antigo, novo)
+
+    texto = re.sub(r"[^a-z0-9]", "", texto)
+    return texto
+
+
+def limpar_cnpj(cnpj: str) -> str:
+    return re.sub(r"\D", "", str(cnpj or ""))
+
+
+def periodo_ano(ano: int) -> Tuple[str, str]:
+    return f"{ano}-01-01", f"{ano}-12-31"
+
+
+def montar_envelope(operacao: str, xml_entrada: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:axis2="http://ws.apache.org/axis2">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <axis2:{operacao}>
+      <axis2:entrada><![CDATA[
+{xml_entrada}
+      ]]></axis2:entrada>
+    </axis2:{operacao}>
+  </soapenv:Body>
+</soapenv:Envelope>
+"""
+
+
+def chamar_soap(operacao: str, xml_entrada: str, timeout: int = 120) -> Dict:
+    envelope = montar_envelope(operacao, xml_entrada)
+
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": f"urn:{operacao}",
+    }
+
+    resultado = {
+        "http_status": None,
+        "operacao": operacao,
+        "retorno": None,
+        "saida_xml": None,
+        "mensagem": None,
+        "raw": None,
+    }
+
+    try:
+        response = requests.post(
+            ENDPOINT,
+            data=envelope.encode("utf-8"),
+            headers=headers,
+            timeout=timeout,
+        )
+
+        resultado["http_status"] = response.status_code
+        resultado["raw"] = response.text
+
+        if response.status_code != 200:
+            resultado["mensagem"] = f"HTTP {response.status_code}"
+            return resultado
+
+        root = ET.fromstring(response.content)
+
+        retorno_el = root.find(".//{http://ws.apache.org/axis2}retorno")
+        saida_el = root.find(".//{http://ws.apache.org/axis2}saida")
+
+        resultado["retorno"] = int(retorno_el.text) if retorno_el is not None and retorno_el.text else None
+
+        saida_escapada = saida_el.text if saida_el is not None else ""
+        saida_xml = html.unescape(saida_escapada or "").strip()
+
+        resultado["saida_xml"] = saida_xml
+
+        if saida_xml:
+            saida_root = ET.fromstring(saida_xml.encode("utf-8"))
+            msg_el = saida_root.find(".//mensagem")
+            resultado["mensagem"] = msg_el.text if msg_el is not None else None
+
+        return resultado
+
+    except requests.exceptions.ConnectionError:
+        resultado["mensagem"] = (
+            "Não foi possível conectar ao ReceitanetBX. "
+            "Verifique se o serviço está rodando em http://127.0.0.1:2443."
+        )
+        return resultado
+
+    except Exception as e:
+        resultado["mensagem"] = f"Erro ao consultar ReceitanetBX: {e}"
+        return resultado
+
+
+# ============================================================
+# PESQUISA ECD
+# ============================================================
+
+def montar_xml_pesquisa(cnpj: str, ano: int) -> str:
+    data_inicio, data_fim = periodo_ano(ano)
+
+    return f"""<pesquisa>
+  <identificacao
+    perfil="{PERFIL}"
+    sistema="{SISTEMA}"
+    tipoarquivo="{TIPO_ARQUIVO}"
+    tipopesquisa="{TIPO_PESQUISA}"
+    nirepresentado="{cnpj}"
+    tiponirepresentado="cnpj" />
+  <campo nome="dataInicio" valor="{data_inicio}" />
+  <campo nome="dataFim" valor="{data_fim}" />
+</pesquisa>"""
+
+
+def extrair_ids_arquivos(saida_xml: Optional[str]) -> List[str]:
+    if not saida_xml:
+        return []
+
+    try:
+        root = ET.fromstring(saida_xml.encode("utf-8"))
+        return [
+            arquivo.attrib.get("id")
+            for arquivo in root.findall(".//arquivo")
+            if arquivo.attrib.get("id")
+        ]
+    except Exception:
+        return []
+
+
+def pesquisar_ecd(cnpj: str, ano: int) -> Dict:
+    xml_entrada = montar_xml_pesquisa(cnpj, ano)
+    resposta = chamar_soap("PesquisarArquivos", xml_entrada)
+
+    ids = extrair_ids_arquivos(resposta.get("saida_xml"))
+
+    if ids:
+        status = "ENCONTRADO"
+    elif resposta.get("mensagem") and "Nenhum arquivo foi encontrado" in resposta.get("mensagem"):
+        status = "NAO_ENCONTRADO"
+    else:
+        status = "ERRO"
+
+    return {
+        "status": status,
+        "http_status": resposta.get("http_status"),
+        "retorno": resposta.get("retorno"),
+        "mensagem": resposta.get("mensagem"),
+        "qtd_arquivos": len(ids),
+        "ids_arquivos": ids,
+        "saida_xml": resposta.get("saida_xml"),
+        "raw": resposta.get("raw"),
+    }
+
+
+# ============================================================
+# SOLICITAÇÃO OPCIONAL
+# ============================================================
+
+def montar_xml_solicitacao(cnpj: str, ids_arquivos: List[str]) -> str:
+    arquivos_xml = "\n".join(
+        f'    <arquivo id="{arquivo_id}" />'
+        for arquivo_id in ids_arquivos
+    )
+
+    return f"""<pedido>
+  <identificacao
+    perfil="{PERFIL}"
+    sistema="{SISTEMA}"
+    tipoarquivo="{TIPO_ARQUIVO}"
+    tipopesquisa="{TIPO_PESQUISA}"
+    nirepresentado="{cnpj}"
+    tiponirepresentado="cnpj" />
+  <arquivos>
+{arquivos_xml}
+  </arquivos>
+</pedido>"""
+
+
+def extrair_numero_pedido(saida_xml: Optional[str]) -> Optional[str]:
+    if not saida_xml:
+        return None
+
+    try:
+        root = ET.fromstring(saida_xml.encode("utf-8"))
+        return root.attrib.get("id")
+    except Exception:
+        return None
+
+
+def solicitar_arquivos(cnpj: str, ids_arquivos: List[str]) -> Dict:
+    xml_entrada = montar_xml_solicitacao(cnpj, ids_arquivos)
+    resposta = chamar_soap("SolicitarArquivos", xml_entrada)
+
+    numero_pedido = extrair_numero_pedido(resposta.get("saida_xml"))
+
+    return {
+        "http_status": resposta.get("http_status"),
+        "retorno": resposta.get("retorno"),
+        "mensagem": resposta.get("mensagem"),
+        "numero_pedido": numero_pedido,
+        "saida_xml": resposta.get("saida_xml"),
+        "raw": resposta.get("raw"),
+    }
+
+
+# ============================================================
+# PLANILHA
+# ============================================================
+
+def localizar_coluna_cnpj(ws) -> Tuple[int, int]:
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 20)):
+        for cell in row:
+            valor_normalizado = normalizar_texto(cell.value)
+            if valor_normalizado == "cnpj":
+                return cell.row, cell.column
+
+    raise ValueError("Não encontrei uma coluna chamada CNPJ nas primeiras 20 linhas da planilha.")
+
+
+def criar_planilha_saida(caminho_entrada: Path, ano: int, solicitar: bool, pausa: float) -> Path:
+    wb_saida = load_workbook(caminho_entrada)
+    ws_saida = wb_saida.active
+    ws_saida.title = "Resultado ECD"
+
+    linha_cabecalho, coluna_cnpj = localizar_coluna_cnpj(ws_saida)
+
+    print(f"Coluna CNPJ detectada: {get_column_letter(coluna_cnpj)}")
+    print(f"Linha de cabeçalho detectada: {linha_cabecalho}")
+
+    col_inicio_resultado = ws_saida.max_column + 1
+
+    novas_colunas = [
+        "CNPJ LIMPO",
+        "ANO CONSULTA",
+        "STATUS ECD",
+        "MENSAGEM RECEITANETBX",
+        "QTD ARQUIVOS",
+        "IDS ARQUIVOS",
+        "SOLICITADO",
+        "NÚMERO PEDIDO",
+        "MENSAGEM SOLICITAÇÃO",
+        "DATA/HORA CONSULTA",
+    ]
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(color="FFFFFF", bold=True)
+    thin = Side(style="thin", color="D9E2F3")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for idx, titulo in enumerate(novas_colunas, start=col_inicio_resultado):
+        cell = ws_saida.cell(row=linha_cabecalho, column=idx, value=titulo)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+
+    processados = 0
+
+    for row_idx in range(linha_cabecalho + 1, ws_saida.max_row + 1):
+        cnpj_original = ws_saida.cell(row=row_idx, column=coluna_cnpj).value
+        cnpj = limpar_cnpj(cnpj_original)
+
+        if not cnpj:
+            continue
+
+        processados += 1
+
+        print("=" * 80)
+        print(f"[{processados}] Pesquisando ECD {ano} para CNPJ {cnpj}")
+
+        status = None
+        mensagem = None
+        qtd_arquivos = 0
+        ids_arquivos = []
+        solicitado = "NÃO"
+        numero_pedido = None
+        mensagem_solicitacao = None
+
+        if len(cnpj) != 14:
+            status = "CNPJ_INVALIDO"
+            mensagem = f"CNPJ inválido: {cnpj_original}"
+            print(f"  {mensagem}")
+        else:
+            resultado = pesquisar_ecd(cnpj, ano)
+
+            status = resultado["status"]
+            mensagem = resultado["mensagem"]
+            qtd_arquivos = resultado["qtd_arquivos"]
+            ids_arquivos = resultado["ids_arquivos"]
+
+            print(f"  Status: {status}")
+            print(f"  Mensagem: {mensagem}")
+            print(f"  Arquivos encontrados: {qtd_arquivos}")
+
+            if ids_arquivos:
+                for arquivo_id in ids_arquivos:
+                    print(f"    - {arquivo_id}")
+
+                if solicitar:
+                    print("  Solicitando arquivos...")
+                    solicitacao = solicitar_arquivos(cnpj, ids_arquivos)
+
+                    numero_pedido = solicitacao.get("numero_pedido")
+                    mensagem_solicitacao = solicitacao.get("mensagem")
+                    solicitado = "SIM" if numero_pedido else "ERRO"
+
+                    print(f"  Pedido criado: {numero_pedido}")
+                    print(f"  Mensagem solicitação: {mensagem_solicitacao}")
+                else:
+                    print("  Solicitação automática desativada.")
+
+        valores_resultado = [
+            cnpj,
+            ano,
+            status,
+            mensagem,
+            qtd_arquivos,
+            " | ".join(ids_arquivos),
+            solicitado,
+            numero_pedido,
+            mensagem_solicitacao,
+            datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        ]
+
+        for offset, valor in enumerate(valores_resultado):
+            col = col_inicio_resultado + offset
+            cell = ws_saida.cell(row=row_idx, column=col, value=valor)
+            cell.border = border
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+        time.sleep(pausa)
+
+    for col_idx in range(col_inicio_resultado, col_inicio_resultado + len(novas_colunas)):
+        letra = get_column_letter(col_idx)
+        ws_saida.column_dimensions[letra].width = 24
+
+    ws_saida.column_dimensions[get_column_letter(col_inicio_resultado + 3)].width = 55
+    ws_saida.column_dimensions[get_column_letter(col_inicio_resultado + 5)].width = 65
+    ws_saida.column_dimensions[get_column_letter(col_inicio_resultado + 8)].width = 45
+
+    ws_saida.auto_filter.ref = ws_saida.dimensions
+    ws_saida.freeze_panes = ws_saida.cell(row=linha_cabecalho + 1, column=1)
+
+    agora = datetime.now().strftime("%Y%m%d_%H%M%S")
+    caminho_saida = PASTA_SAIDA / f"{caminho_entrada.stem}_resultado_ECD_{ano}_{agora}.xlsx"
+
+    wb_saida.save(caminho_saida)
+
+    print("=" * 80)
+    print("Finalizado.")
+    print(f"Total de CNPJs processados: {processados}")
+    print(f"Planilha salva em: {caminho_saida.resolve()}")
+
+    return caminho_saida
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Consulta ECD via ReceitanetBX Serviço")
+
+    parser.add_argument(
+        "--arquivo",
+        required=True,
+        help="Caminho da planilha .xlsx de entrada.",
+    )
+
+    parser.add_argument(
+        "--ano",
+        type=int,
+        default=2024,
+        help="Ano da escrituração. Padrão: 2024.",
+    )
+
+    parser.add_argument(
+        "--solicitar",
+        action="store_true",
+        help="Se informado, solicita automaticamente os arquivos encontrados.",
+    )
+
+    parser.add_argument(
+        "--pausa",
+        type=float,
+        default=1.0,
+        help="Pausa em segundos entre consultas. Padrão: 1.0.",
+    )
+
+    args = parser.parse_args()
+
+    caminho_entrada = Path(args.arquivo)
+
+    if not caminho_entrada.exists():
+        raise FileNotFoundError(f"Arquivo não encontrado: {caminho_entrada}")
+
+    if caminho_entrada.suffix.lower() != ".xlsx":
+        raise ValueError("Por enquanto, use uma planilha .xlsx.")
+
+    criar_planilha_saida(
+        caminho_entrada=caminho_entrada,
+        ano=args.ano,
+        solicitar=args.solicitar,
+        pausa=args.pausa,
+    )
+
+
+if __name__ == "__main__":
+    main()

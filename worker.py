@@ -5,6 +5,12 @@ from datetime import datetime
 from typing import Dict, Optional
 
 import database
+from config import (
+    DOWNLOAD_AUTO_CHECK_ENABLED,
+    DOWNLOAD_CHECK_INTERVAL_SECONDS,
+    DOWNLOAD_CHECK_MAX_MINUTES,
+)
+from services.downloads_lote import verificar_downloads_lote
 from services.receitanetbx import pesquisar_ecd, solicitar_arquivos
 
 logger = logging.getLogger(__name__)
@@ -14,17 +20,15 @@ class WorkerECD:
     def __init__(self):
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._pause_event = threading.Event()
         self._state = {
             "rodando": False,
-            "pausado": False,
             "mensagem": "Aguardando.",
             "ultimo_cnpj": None,
             "ultimo_ano": None,
             "ultimo_status": None,
             "ultimo_mensagem": None,
             "lote_id": None,
+            "fase": "aguardando",
             "inicio": None,
             "fim": None,
             "erro": None,
@@ -45,17 +49,15 @@ class WorkerECD:
             if self._state["rodando"]:
                 raise RuntimeError("As consultas já estão em execução.")
 
-            self._stop_event.clear()
-            self._pause_event.clear()
             self._state.update({
                 "rodando": True,
-                "pausado": False,
                 "mensagem": "Iniciando consultas.",
                 "ultimo_cnpj": None,
                 "ultimo_ano": None,
                 "ultimo_status": None,
                 "ultimo_mensagem": None,
                 "lote_id": lote_id,
+                "fase": "consulta",
                 "inicio": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "fim": None,
                 "erro": None,
@@ -75,34 +77,6 @@ class WorkerECD:
 
         return self.status()
 
-    def pausar(self) -> Dict:
-        with self._lock:
-            if self._state["rodando"]:
-                self._pause_event.set()
-                self._state["pausado"] = True
-                self._state["mensagem"] = "Pausado pelo usuário."
-                logger.info("[WorkerECD] Execução pausada pelo usuário")
-        return self.status()
-
-    def continuar(self) -> Dict:
-        with self._lock:
-            if self._state["rodando"]:
-                self._pause_event.clear()
-                self._state["pausado"] = False
-                self._state["mensagem"] = "Continuando consultas."
-                logger.info("[WorkerECD] Execução continuada pelo usuário")
-        return self.status()
-
-    def parar(self) -> Dict:
-        with self._lock:
-            if self._state["rodando"]:
-                self._stop_event.set()
-                self._pause_event.clear()
-                self._state["pausado"] = False
-                self._state["mensagem"] = "Parada solicitada pelo usuário."
-                logger.info("[WorkerECD] Parada solicitada pelo usuário")
-        return self.status()
-
     def _set_state(self, **kwargs) -> None:
         with self._lock:
             self._state.update(kwargs)
@@ -115,6 +89,67 @@ class WorkerECD:
             database.atualizar_lote(lote_id, dados)
         except Exception:
             logger.exception("[WorkerECD] Falha ao atualizar status do lote %s para %s", lote_id, status)
+
+    def _monitorar_downloads(self, lote_id: Optional[str]) -> Dict:
+        if not lote_id:
+            return {}
+
+        if not DOWNLOAD_AUTO_CHECK_ENABLED:
+            logger.info("[WorkerECD] Verificação automática de downloads desativada | lote_id=%s", lote_id)
+            return database.resumo_status(lote_id=lote_id)
+
+        intervalo = max(int(DOWNLOAD_CHECK_INTERVAL_SECONDS or 30), 5)
+        max_segundos = max(int(DOWNLOAD_CHECK_MAX_MINUTES or 20), 1) * 60
+        prazo_final = time.monotonic() + max_segundos
+        tentativa = 0
+        ultimo_resultado = {}
+
+        while time.monotonic() <= prazo_final:
+            resumo_atual = database.resumo_status(lote_id=lote_id)
+            aguardando_total = int(resumo_atual.get("AGUARDANDO_DOWNLOAD", 0)) + int(resumo_atual.get("SOLICITADO", 0))
+
+            if aguardando_total <= 0:
+                self._set_state(
+                    fase="finalizado",
+                    mensagem="Todos os downloads localizados ou não há arquivos aguardando download.",
+                    ultimo_status="BAIXADO" if int(resumo_atual.get("BAIXADO", 0)) > 0 else "FINALIZADO",
+                )
+                return resumo_atual
+
+            tentativa += 1
+            self._set_state(
+                fase="download",
+                mensagem=f"Aguardando download do ReceitanetBX. Verificação automática {tentativa}. Aguardando: {aguardando_total}.",
+                ultimo_status="AGUARDANDO_DOWNLOAD",
+                ultimo_mensagem="O sistema está procurando os arquivos baixados nos logs/pasta do ReceitanetBX.",
+            )
+            self._atualizar_status_lote(lote_id, "AGUARDANDO_DOWNLOAD")
+
+            logger.info(
+                "[WorkerECD] Verificação automática de downloads | lote_id=%s | tentativa=%s | aguardando=%s",
+                lote_id,
+                tentativa,
+                aguardando_total,
+            )
+
+            ultimo_resultado = verificar_downloads_lote(lote_id=lote_id)
+            resumo = ultimo_resultado.get("resumo") or database.resumo_status(lote_id=lote_id)
+            aguardando_apos = int(resumo.get("AGUARDANDO_DOWNLOAD", 0)) + int(resumo.get("SOLICITADO", 0))
+            baixados = int(resumo.get("BAIXADO", 0))
+
+            self._set_state(
+                mensagem=f"Downloads: {baixados} baixado(s), {aguardando_apos} aguardando.",
+                ultimo_status="AGUARDANDO_DOWNLOAD" if aguardando_apos else "BAIXADO",
+                ultimo_mensagem=ultimo_resultado.get("mensagem") or None,
+            )
+
+            if aguardando_apos <= 0:
+                return resumo
+
+            time.sleep(intervalo)
+
+        logger.info("[WorkerECD] Prazo de verificação automática encerrado | lote_id=%s", lote_id)
+        return ultimo_resultado.get("resumo") or database.resumo_status(lote_id=lote_id)
 
     def _executar(self, tamanho_lote: int, solicitar: bool, pausa: float, lote_id: Optional[str]) -> None:
         final_status_lote = "FINALIZADO"
@@ -129,25 +164,15 @@ class WorkerECD:
             )
             self._atualizar_status_lote(lote_id, "CONSULTANDO", started_at=datetime.now(), finished_at=None)
 
-            while not self._stop_event.is_set():
-                while self._pause_event.is_set() and not self._stop_event.is_set():
-                    time.sleep(0.5)
-
+            while True:
                 pendentes = database.buscar_pendentes(tamanho_lote, lote_id=lote_id)
                 logger.info("[WorkerECD] Pendentes encontrados nesta rodada: %s | lote_id=%s", len(pendentes), lote_id)
 
                 if not pendentes:
-                    self._set_state(mensagem="Nenhuma consulta pendente. Finalizado.")
+                    self._set_state(mensagem="Nenhuma consulta pendente. Verificando downloads.", fase="download")
                     break
 
                 for consulta in pendentes:
-                    if self._stop_event.is_set():
-                        final_status_lote = "PARADO"
-                        break
-
-                    while self._pause_event.is_set() and not self._stop_event.is_set():
-                        time.sleep(0.5)
-
                     consulta_id = consulta["_id"]
                     cnpj = consulta.get("cnpj")
                     ano = int(consulta.get("ano_calendario"))
@@ -157,6 +182,7 @@ class WorkerECD:
                         continue
 
                     self._set_state(
+                        fase="consulta",
                         mensagem=f"Consultando CNPJ {cnpj} - ano {ano}.",
                         ultimo_cnpj=cnpj,
                         ultimo_ano=ano,
@@ -210,20 +236,37 @@ class WorkerECD:
                                 len(ids_arquivos),
                             )
                             solicitacao = solicitar_arquivos(cnpj, ids_arquivos)
+                            numero_pedido = solicitacao.get("numero_pedido")
+
                             dados_atualizacao.update({
-                                "solicitado": "SIM" if solicitacao.get("numero_pedido") else "ERRO",
-                                "numero_pedido": solicitacao.get("numero_pedido"),
+                                "solicitado": "SIM" if numero_pedido else "ERRO",
+                                "numero_pedido": numero_pedido,
                                 "mensagem_solicitacao": solicitacao.get("mensagem"),
                                 "saida_xml_solicitacao": solicitacao.get("saida_xml"),
                                 "raw_solicitacao": solicitacao.get("raw"),
                             })
 
-                            if solicitacao.get("numero_pedido"):
-                                dados_atualizacao["status"] = "SOLICITADO"
+                            if numero_pedido:
+                                dados_atualizacao.update({
+                                    "status": "AGUARDANDO_DOWNLOAD",
+                                    "download_localizado": False,
+                                    "mensagem_download": "Pedido registrado. Aguardando o ReceitanetBX baixar o arquivo.",
+                                    "ultima_verificacao_download": None,
+                                })
+                            else:
+                                dados_atualizacao.update({
+                                    "status": "ERRO_DOWNLOAD",
+                                    "download_localizado": False,
+                                    "mensagem_download": solicitacao.get("mensagem") or "Não foi possível registrar o pedido de download.",
+                                })
 
                         database.atualizar_consulta(consulta_id, dados_atualizacao)
 
-                        mensagem_final = resultado.get("mensagem") or dados_atualizacao["status"]
+                        mensagem_final = (
+                            dados_atualizacao.get("mensagem_download")
+                            or resultado.get("mensagem")
+                            or dados_atualizacao["status"]
+                        )
                         self._set_state(
                             mensagem=f"{dados_atualizacao['status']}: {cnpj}",
                             ultimo_cnpj=cnpj,
@@ -259,14 +302,26 @@ class WorkerECD:
 
                     time.sleep(max(float(pausa or 0), 0))
 
-            if self._stop_event.is_set():
-                final_status_lote = "PARADO"
-                self._set_state(mensagem="Execução parada pelo usuário.")
-                logger.info("[WorkerECD] Execução parada pelo usuário | lote_id=%s", lote_id)
+            # Depois de pesquisar/solicitar, o próprio sistema tenta localizar os arquivos.
+            resumo_final = self._monitorar_downloads(lote_id) if solicitar else database.resumo_status(lote_id=lote_id)
+            aguardando = int(resumo_final.get("AGUARDANDO_DOWNLOAD", 0)) + int(resumo_final.get("SOLICITADO", 0))
+            erros_download = int(resumo_final.get("ERRO_DOWNLOAD", 0))
+
+            if aguardando > 0:
+                final_status_lote = "AGUARDANDO_DOWNLOAD"
+                self._set_state(
+                    fase="download",
+                    mensagem=f"Consulta finalizada. {aguardando} arquivo(s) ainda aguardando download do ReceitanetBX.",
+                    ultimo_status="AGUARDANDO_DOWNLOAD",
+                )
+            elif erros_download > 0:
+                final_status_lote = "FINALIZADO_COM_ERRO_DOWNLOAD"
+            else:
+                final_status_lote = "FINALIZADO"
 
         except Exception as e:
             final_status_lote = "ERRO"
-            self._set_state(erro=str(e), mensagem="Erro geral no worker.")
+            self._set_state(erro=str(e), mensagem="Erro geral no worker.", fase="erro")
             logger.exception("[WorkerECD] Erro geral no worker | lote_id=%s", lote_id)
 
         finally:
@@ -279,7 +334,6 @@ class WorkerECD:
             )
             self._set_state(
                 rodando=False,
-                pausado=False,
                 fim=datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             )
             logger.info(

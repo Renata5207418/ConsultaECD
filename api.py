@@ -8,6 +8,8 @@ from werkzeug.utils import secure_filename
 
 import database
 from config import RESULT_DIR, UPLOAD_DIR
+from services.downloads_receitanetbx import criar_zip_lote
+from services.downloads_lote import verificar_downloads_lote
 from services.planilha import exportar_consultas_excel, ler_planilha_entrada
 from worker import WorkerECD
 
@@ -47,8 +49,11 @@ def form_bool(nome: str, padrao: bool = False) -> bool:
 
 
 def lote_atual_id() -> str | None:
-    lote = database.obter_lote_mais_recente()
-    return str(lote["_id"]) if lote else None
+    return database.resolver_lote_id("atual")
+
+
+def resolver_lote_param(valor: str | None) -> str | None:
+    return database.resolver_lote_id(valor or "atual")
 
 
 @api_bp.get("/status")
@@ -176,10 +181,7 @@ def importar():
 def consultas():
     status_filtro = request.args.get("status") or None
     limit = int(request.args.get("limit", 500))
-    lote_id = request.args.get("lote_id") or None
-
-    if lote_id == "atual":
-        lote_id = lote_atual_id()
+    lote_id = resolver_lote_param(request.args.get("lote_id"))
 
     docs = database.listar_consultas(status=status_filtro, limit=limit, lote_id=lote_id)
 
@@ -195,7 +197,7 @@ def iniciar():
     tamanho_lote = int(body.get("tamanho_lote", 100))
     solicitar = bool(body.get("solicitar", False))
     pausa = float(body.get("pausa", 1.0))
-    lote_id = body.get("lote_id") or lote_atual_id()
+    lote_id = resolver_lote_param(body.get("lote_id"))
 
     if not lote_id:
         return erro_json("Nenhum lote encontrado para iniciar.", 404)
@@ -208,35 +210,81 @@ def iniciar():
         return erro_json(str(e), 400)
 
 
-@api_bp.post("/pausar")
-def pausar():
-    return jsonify({"ok": True, "worker": worker_ecd.pausar()})
-
-
-@api_bp.post("/continuar")
-def continuar():
-    return jsonify({"ok": True, "worker": worker_ecd.continuar()})
-
-
-@api_bp.post("/parar")
-def parar():
-    return jsonify({"ok": True, "worker": worker_ecd.parar()})
-
 
 @api_bp.post("/reprocessar-erros")
 def reprocessar_erros():
     body = request.get_json(silent=True) or {}
-    lote_id = body.get("lote_id") or lote_atual_id()
+    lote_id = resolver_lote_param(body.get("lote_id"))
     modificados = database.reprocessar_erros(lote_id=lote_id)
     logger.info("[API] Reprocessamento solicitado | lote_id=%s | modificados=%s", lote_id, modificados)
     return jsonify({"ok": True, "modificados": modificados, "lote_id": lote_id})
 
 
+@api_bp.post("/downloads/verificar")
+def verificar_downloads():
+    body = request.get_json(silent=True) or {}
+    lote_id = resolver_lote_param(body.get("lote_id"))
+
+    if not lote_id:
+        return erro_json("Nenhum lote encontrado para verificar downloads.", 404)
+
+    try:
+        resultado = verificar_downloads_lote(lote_id=lote_id)
+        return jsonify(resultado)
+    except Exception as e:
+        logger.exception("[API] Erro geral ao verificar downloads | lote_id=%s", lote_id)
+        return erro_json(str(e), 500)
+
+
+@api_bp.get("/downloads/arquivo/<consulta_id>")
+def baixar_arquivo_consulta(consulta_id: str):
+    consulta = database.obter_consulta_por_id(consulta_id)
+    if not consulta:
+        return erro_json("Consulta não encontrada.", 404)
+
+    caminho = Path(str(consulta.get("caminho_arquivo_baixado") or ""))
+    if not caminho.exists() or not caminho.is_file():
+        return erro_json("Arquivo baixado não encontrado no servidor.", 404)
+
+    logger.info("[API] Download individual solicitado | consulta_id=%s | arquivo=%s", consulta_id, caminho)
+    return send_file(caminho, as_attachment=True, download_name=caminho.name)
+
+
+@api_bp.get("/downloads/zip")
+def baixar_zip_lote():
+    lote_id = resolver_lote_param(request.args.get("lote_id"))
+    if not lote_id:
+        return erro_json("Nenhum lote encontrado para gerar ZIP.", 404)
+
+    consultas_baixadas = database.listar_baixados_lote(lote_id=lote_id)
+    if not consultas_baixadas:
+        return erro_json("Nenhum arquivo baixado encontrado neste lote. Verifique os downloads antes de gerar o ZIP.", 404)
+
+    try:
+        resultado_zip = criar_zip_lote(consultas_baixadas, lote_id=lote_id)
+    except Exception as e:
+        logger.exception("[API] Erro ao gerar ZIP do lote | lote_id=%s", lote_id)
+        return erro_json(str(e), 500)
+
+    caminho_zip = resultado_zip["caminho_zip"]
+    logger.info(
+        "[API] ZIP gerado | lote_id=%s | arquivo=%s | qtd=%s",
+        lote_id,
+        caminho_zip,
+        resultado_zip.get("quantidade_arquivos"),
+    )
+
+    return send_file(
+        caminho_zip,
+        as_attachment=True,
+        download_name=resultado_zip["nome_zip"],
+        mimetype="application/zip",
+    )
+
+
 @api_bp.get("/exportar")
 def exportar():
-    lote_id = request.args.get("lote_id") or None
-    if lote_id == "atual":
-        lote_id = lote_atual_id()
+    lote_id = resolver_lote_param(request.args.get("lote_id"))
 
     consultas_exportacao = database.listar_consultas_para_exportacao(lote_id=lote_id)
 

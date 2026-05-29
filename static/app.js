@@ -12,6 +12,9 @@ const sections = {
 let loteAtualId = null;
 let workerRodando = false;
 let atualizandoConsultas = false;
+let verificandoDownloads = false;
+let ultimoResumo = {};
+let ultimaMensagemFlash = "";
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -64,8 +67,22 @@ function getMongoId(item) {
   return "";
 }
 
-function showToast(message) {
-  alert(message);
+function mostrarMensagem(message, tipo = "info", autoHide = true) {
+  const el = qs("#flashMensagem");
+  if (!el || !message) return;
+
+  ultimaMensagemFlash = message;
+  el.classList.remove("hidden", "flash-info", "flash-success", "flash-warning", "flash-error");
+  el.classList.add(`flash-${tipo}`);
+  el.innerHTML = escapeHtml(message);
+
+  if (autoHide) {
+    setTimeout(() => {
+      if (ultimaMensagemFlash === message) {
+        el.classList.add("hidden");
+      }
+    }, 7000);
+  }
 }
 
 async function apiGet(url) {
@@ -110,45 +127,67 @@ function atualizarBadge(worker) {
     badge.textContent = "Atenção";
     return;
   }
-  if (worker?.rodando && worker?.pausado) {
-    badge.classList.add("badge-paused");
-    badge.textContent = "Pausado";
-    return;
-  }
+
   if (worker?.rodando) {
     badge.classList.add("badge-running");
-    badge.textContent = "Consultando";
+    badge.textContent = worker?.fase === "download" ? "Downloads" : "Consultando";
     return;
   }
+
   badge.classList.add("badge-idle");
   badge.textContent = "Aguardando";
 }
 
 function atualizarResumo(resumo = {}) {
-  const encontradas = (resumo.ENCONTRADO || 0) + (resumo.SOLICITADO || 0);
-  const erros = (resumo.ERRO || 0) + (resumo.CNPJ_INVALIDO || 0);
+  ultimoResumo = resumo || {};
+
+  const solicitacoes =
+    Number(resumo.SOLICITADO || 0) +
+    Number(resumo.AGUARDANDO_DOWNLOAD || 0) +
+    Number(resumo.BAIXADO || 0) +
+    Number(resumo.ERRO_DOWNLOAD || 0);
 
   setText("statPendente", resumo.PENDENTE || 0);
   setText("statProcessando", resumo.PROCESSANDO || 0);
-  setText("statEncontrado", encontradas);
+  setText("statEncontrado", resumo.ENCONTRADO || 0);
+  setText("statSolicitacoes", solicitacoes);
+  setText("statAguardandoDownload", Number(resumo.AGUARDANDO_DOWNLOAD || 0) + Number(resumo.SOLICITADO || 0));
+  setText("statBaixado", resumo.BAIXADO || 0);
   setText("statNaoEncontrada", resumo.NAO_ENCONTRADA || 0);
-  setText("statErro", erros);
+  setText("statErro", (resumo.ERRO || 0) + (resumo.ERRO_DOWNLOAD || 0) + (resumo.CNPJ_INVALIDO || 0));
+
+  atualizarResumoDownloads();
+}
+
+function atualizarResumoDownloads(lote = null) {
+  const baixados = Number(ultimoResumo.BAIXADO || 0);
+  const aguardando = Number(ultimoResumo.AGUARDANDO_DOWNLOAD || 0) + Number(ultimoResumo.SOLICITADO || 0);
+  const solicitados = baixados + aguardando + Number(ultimoResumo.ERRO_DOWNLOAD || 0);
+
+  setText("downloadSolicitados", solicitados);
+  setText("downloadAguardando", aguardando);
+  setText("downloadBaixados", baixados);
+  setText("downloadZipStatus", baixados > 0 ? "Disponível" : "Indisponível");
+
+  const ultima = lote?.ultima_verificacao_download || "-";
+  setText("downloadUltimaVerificacao", ultima);
+
+  const btnZip = qs("#btnBaixarZip");
+  if (btnZip) {
+    btnZip.disabled = baixados <= 0;
+    btnZip.textContent = baixados > 0 ? `Baixar ZIP do lote (${baixados})` : "Baixar ZIP do lote";
+  }
 }
 
 function atualizarLote(lote = {}) {
-  loteAtualId = lote?.id || loteAtualId;
-
+  loteAtualId = lote.id || lote._id || loteAtualId;
   setText("loteArquivo", lote.nome_original || lote.arquivo_original || lote.nome_arquivo || lote.filename || lote.arquivo || "-");
   setText("loteAno", lote.ano_calendario || lote.ano || "-");
   setText("loteStatus", lote.status || "-");
   setText("loteTotal", lote.total_importado || lote.total_linhas || lote.total || lote.total_registros || "-");
   setText("loteValidos", lote.total_validos || lote.validos || lote.total_validos_unicos || "-");
-  setText("loteInvalidos", lote.total_invalidos ?? lote.invalidos ?? "-");
-
-  const exportar = qs("#btnExportarExcel");
-  if (exportar) {
-    exportar.href = loteAtualId ? `/api/exportar?lote_id=${encodeURIComponent(loteAtualId)}` : "/api/exportar?lote_id=atual";
-  }
+  setText("loteInvalidos", lote.total_invalidos || lote.invalidos || "-");
+  atualizarResumoDownloads(lote);
 }
 
 function atualizarWorker(worker = {}) {
@@ -156,34 +195,25 @@ function atualizarWorker(worker = {}) {
 
   const liveBox = qs("#liveBox");
   const liveDot = qs("#liveDot");
-  if (liveBox && liveDot) {
-    liveBox.classList.toggle("running", Boolean(worker.rodando && !worker.pausado && !worker.erro));
-    liveBox.classList.toggle("paused", Boolean(worker.rodando && worker.pausado));
-    liveBox.classList.toggle("error", Boolean(worker.erro));
-    liveDot.classList.toggle("running", Boolean(worker.rodando && !worker.pausado && !worker.erro));
-    liveDot.classList.toggle("paused", Boolean(worker.rodando && worker.pausado));
-    liveDot.classList.toggle("error", Boolean(worker.erro));
-  }
+  if (liveBox) liveBox.classList.remove("running", "paused", "error");
+  if (liveDot) liveDot.classList.remove("running", "paused", "error");
 
   let titulo = "Aguardando";
-  if (worker.erro) titulo = "Atenção";
-  else if (worker.rodando && worker.pausado) titulo = "Pausado";
-  else if (worker.rodando) titulo = "Consultando em tempo real";
-  else if (worker.fim) titulo = "Finalizado";
+  if (worker.erro) {
+    titulo = "Atenção";
+    liveBox?.classList.add("error");
+    liveDot?.classList.add("error");
+  } else if (worker.rodando) {
+    titulo = worker.fase === "download" ? "Verificando downloads" : "Consultando";
+    liveBox?.classList.add("running");
+    liveDot?.classList.add("running");
+  }
 
   setText("workerTitulo", titulo);
-  setText("workerMensagem", worker.ultimo_mensagem || worker.mensagem || "Nenhuma consulta em execução.");
-  setText("workerUltimoCnpj", formatarCnpj(worker.ultimo_cnpj));
+  setText("workerMensagem", worker.mensagem || "Nenhuma consulta em execução.");
+  setText("workerUltimoCnpj", worker.ultimo_cnpj ? formatarCnpj(worker.ultimo_cnpj) : "-");
   setText("workerInicio", worker.inicio || "-");
   setText("workerFim", worker.fim || "-");
-
-  const btnPausar = qs("#btnPausar");
-  const btnContinuar = qs("#btnContinuar");
-  const btnParar = qs("#btnParar");
-
-  if (btnPausar) btnPausar.disabled = !worker.rodando || worker.pausado;
-  if (btnContinuar) btnContinuar.disabled = !worker.rodando || !worker.pausado;
-  if (btnParar) btnParar.disabled = !worker.rodando;
 }
 
 async function atualizarStatus() {
@@ -196,10 +226,27 @@ async function atualizarStatus() {
     return data;
   } catch (err) {
     console.error("Erro ao atualizar status:", err);
-    atualizarBadge({ rodando: false, pausado: false, erro: true });
-    atualizarWorker({ rodando: false, pausado: false, erro: true, mensagem: err.message });
+    atualizarBadge({ rodando: false, erro: true });
+    atualizarWorker({ rodando: false, erro: true, mensagem: err.message });
     return null;
   }
+}
+
+function montarLinkArquivo(item) {
+  const id = getMongoId(item);
+  if (item.status === "BAIXADO" && item.caminho_arquivo_baixado && id) {
+    return `<a class="link-download" href="/api/downloads/arquivo/${encodeURIComponent(id)}">Baixar</a>`;
+  }
+
+  if (item.status === "AGUARDANDO_DOWNLOAD" || item.status === "SOLICITADO") {
+    return `<span class="muted-mini">Aguardando</span>`;
+  }
+
+  if (item.status === "ERRO_DOWNLOAD") {
+    return `<span class="muted-mini danger-text">Erro</span>`;
+  }
+
+  return "-";
 }
 
 async function carregarConsultas() {
@@ -214,15 +261,14 @@ async function carregarConsultas() {
   const params = new URLSearchParams();
   params.set("limit", "500");
   if (status) params.set("status", status);
-  if (loteAtualId) params.set("lote_id", loteAtualId);
-  else params.set("lote_id", "atual");
+  params.set("lote_id", loteAtualId || "atual");
 
   try {
     const data = await apiGet(`/api/consultas?${params.toString()}`);
     const consultas = data.consultas || data.items || [];
 
     if (!consultas.length) {
-      tbody.innerHTML = `<tr><td colspan="11">Nenhuma consulta encontrada.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12">Nenhuma consulta encontrada.</td></tr>`;
       return;
     }
 
@@ -233,7 +279,7 @@ async function carregarConsultas() {
       const idsArquivos = normalizarListaIds(item.ids_arquivos || item.arquivos_ids || item.ids);
       const qtdArquivos = item.qtd_arquivos ?? item.quantidade_arquivos ?? item.qtd ?? "";
       const numeroPedido = item.numero_pedido || item.pedido || "";
-      const mensagem = item.mensagem || item.mensagem_receitanetbx || item.mensagem_solicitacao || item.observacao || "";
+      const mensagem = item.mensagem_download || item.mensagem || item.mensagem_receitanetbx || item.mensagem_solicitacao || item.observacao || "";
 
       return `
         <tr>
@@ -247,13 +293,14 @@ async function carregarConsultas() {
           <td title="${escapeHtml(idsArquivos)}">${escapeHtml(idsArquivos)}</td>
           <td title="${escapeHtml(numeroPedido)}">${escapeHtml(numeroPedido)}</td>
           <td>${escapeHtml(item.tentativas ?? "")}</td>
+          <td>${montarLinkArquivo(item)}</td>
           <td title="${escapeHtml(mensagem)}">${escapeHtml(mensagem)}</td>
         </tr>
       `;
     }).join("");
   } catch (err) {
     console.error("Erro ao carregar consultas:", err);
-    tbody.innerHTML = `<tr><td colspan="11">Erro ao carregar consultas: ${escapeHtml(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12">Erro ao carregar consultas: ${escapeHtml(err.message)}</td></tr>`;
   } finally {
     atualizandoConsultas = false;
   }
@@ -297,6 +344,7 @@ async function importarPlanilha() {
     ${escapeHtml(data.worker_mensagem || "Consultas iniciadas.")}
   `;
 
+  mostrarMensagem("Consulta iniciada. Acompanhe o andamento nos cards e na tela de resultados.", "success");
   await atualizarStatus();
   await carregarConsultas();
 
@@ -330,15 +378,45 @@ async function importarEIniciarConsultas() {
     if (resultBox) {
       resultBox.innerHTML = `<strong>Erro:</strong> ${escapeHtml(err.message)}`;
       resultBox.classList.remove("hidden");
-    } else {
-      showToast(err.message);
     }
+    mostrarMensagem(err.message, "error", false);
   } finally {
     if (botao) {
       botao.disabled = false;
       botao.textContent = "Importar e iniciar consultas";
     }
   }
+}
+
+async function verificarDownloadsAutomatico() {
+  const aguardando = Number(ultimoResumo.AGUARDANDO_DOWNLOAD || 0) + Number(ultimoResumo.SOLICITADO || 0);
+  if (verificandoDownloads || workerRodando || aguardando <= 0) return;
+
+  verificandoDownloads = true;
+  try {
+    const data = await apiPost("/api/downloads/verificar", { lote_id: loteAtualId || "atual" });
+    await atualizarStatus();
+    await carregarConsultas();
+
+    if ((data.encontrados || 0) > 0) {
+      mostrarMensagem(`${data.encontrados} arquivo(s) localizado(s). O ZIP do lote já pode ser baixado.`, "success");
+    }
+  } catch (err) {
+    console.error("Erro na verificação automática de downloads:", err);
+  } finally {
+    verificandoDownloads = false;
+  }
+}
+
+function baixarZipLote() {
+  const qtdBaixados = Number(ultimoResumo.BAIXADO || 0);
+  if (qtdBaixados <= 0) {
+    mostrarMensagem("Nenhum arquivo baixado neste lote ainda. O sistema está verificando automaticamente.", "warning");
+    return;
+  }
+
+  const lote = encodeURIComponent(loteAtualId || "atual");
+  window.location.href = `/api/downloads/zip?lote_id=${lote}`;
 }
 
 async function reprocessarErros() {
@@ -350,22 +428,25 @@ async function reprocessarErros() {
 
     if ((data.modificados || 0) > 0) {
       await iniciarConsulta(data.lote_id || loteAtualId);
+      mostrarMensagem("Erros enviados para reprocessamento.", "success");
     } else {
-      showToast("Nenhum erro encontrado no lote atual para reprocessar.");
+      mostrarMensagem("Nenhum erro encontrado no lote atual para reprocessar.", "info");
     }
   } catch (err) {
-    showToast(err.message);
+    mostrarMensagem(err.message, "error", false);
   }
 }
 
 async function atualizarTudo() {
   await atualizarStatus();
   await carregarConsultas();
+  await verificarDownloadsAutomatico();
 }
 
 function bindEvents() {
   qsa(".nav-item").forEach(btn => btn.addEventListener("click", () => trocarSecao(btn.dataset.section)));
   qs("#btnAtualizarResultados")?.addEventListener("click", atualizarTudo);
+  qs("#btnBaixarZip")?.addEventListener("click", baixarZipLote);
 
   qs("#btnToggleSidebar")?.addEventListener("click", () => {
     qs("#sidebar")?.classList.toggle("collapsed");
@@ -391,10 +472,6 @@ function bindEvents() {
   qs("#btnImportarIniciar")?.addEventListener("click", importarEIniciarConsultas);
   qs("#btnReprocessarErros")?.addEventListener("click", reprocessarErros);
   qs("#filtroStatus")?.addEventListener("change", carregarConsultas);
-
-  qs("#btnPausar")?.addEventListener("click", async () => { await apiPost("/api/pausar"); await atualizarStatus(); });
-  qs("#btnContinuar")?.addEventListener("click", async () => { await apiPost("/api/continuar"); await atualizarStatus(); });
-  qs("#btnParar")?.addEventListener("click", async () => { await apiPost("/api/parar"); await atualizarStatus(); });
 }
 
 async function boot() {
@@ -409,7 +486,11 @@ async function boot() {
     if (workerRodando || resultadosAtivo) {
       await carregarConsultas();
     }
-  }, 1500);
+  }, 2000);
+
+  setInterval(async () => {
+    await verificarDownloadsAutomatico();
+  }, 30000);
 }
 
 boot();

@@ -46,12 +46,12 @@
         </div>
       </header>
 
+      <div id="flashMensagem" class="flash-message hidden"></div>
+
       <section id="section-nova-consulta" class="section active">
         <div class="cards">
-          <div class="card stat-card"><span>Pendentes</span><strong id="statPendente">0</strong></div>
-          <div class="card stat-card info"><span>Consultando</span><strong id="statProcessando">0</strong></div>
-          <div class="card stat-card success"><span>Encontradas</span><strong id="statEncontrado">0</strong></div>
-          <div class="card stat-card warning"><span>Não encontradas | Sem Lançamentos</span><strong id="statNaoEncontrada">0</strong></div>
+          <div class="card stat-card success"><span>Baixadas</span><strong id="statBaixado">0</strong></div>
+          <div class="card stat-card warning"><span>Não encontradas</span><strong id="statNaoEncontrada">0</strong></div>
           <div class="card stat-card danger"><span>Erros</span><strong id="statErro">0</strong></div>
         </div>
 
@@ -87,7 +87,7 @@
               </label>
 
               <div class="button-row">
-                <button id="btnImportarIniciar" class="btn btn-primary" color="grey" type="button">Importar e iniciar consultas</button>
+                <button id="btnImportarIniciar" class="btn btn-primary" type="button">Importar e iniciar consultas</button>
               </div>
             </form>
             <div id="importResultado" class="result-box hidden"></div>
@@ -116,12 +116,6 @@
                 <p><span>Início:</span> <strong id="workerInicio">-</strong></p>
                 <p><span>Fim:</span> <strong id="workerFim">-</strong></p>
               </div>
-
-              <div class="button-row mini-actions">
-                <button id="btnPausar" class="btn btn-secondary btn-small" type="button">Pausar</button>
-                <button id="btnContinuar" class="btn btn-secondary btn-small" type="button">Continuar</button>
-                <button id="btnParar" class="btn btn-danger btn-small" type="button">Parar</button>
-              </div>
             </div>
           </div>
         </div>
@@ -141,15 +135,26 @@
                 <option value="PENDENTE">Pendentes</option>
                 <option value="PROCESSANDO">Processando</option>
                 <option value="ENCONTRADO">Encontradas</option>
-                <option value="SOLICITADO">Solicitadas</option>
+                <option value="AGUARDANDO_DOWNLOAD">Aguardando download</option>
+                <option value="BAIXADO">Baixadas</option>
                 <option value="NAO_ENCONTRADA">Não encontradas</option>
                 <option value="CNPJ_INVALIDO">CNPJ inválido</option>
                 <option value="ERRO">Erros</option>
+                <option value="ERRO_DOWNLOAD">Erro download</option>
               </select>
               <button id="btnAtualizarResultados" class="btn btn-secondary" type="button">Atualizar</button>
+              <button id="btnBaixarZip" class="btn btn-success" type="button" disabled>Baixar ZIP do lote</button>
               <a id="btnExportarExcel" class="btn btn-primary" href="/api/exportar?lote_id=atual">Exportar Excel</a>
               <button id="btnReprocessarErros" class="btn btn-warning" type="button">Reprocessar erros</button>
             </div>
+          </div>
+
+          <div class="download-summary" id="downloadSummary">
+            <div><span>Solicitados</span><strong id="downloadSolicitados">0</strong></div>
+            <div><span>Aguardando</span><strong id="downloadAguardando">0</strong></div>
+            <div><span>Baixados</span><strong id="downloadBaixados">0</strong></div>
+            <div><span>ZIP</span><strong id="downloadZipStatus">Indisponível</strong></div>
+            <div><span>Última verificação</span><strong id="downloadUltimaVerificacao">-</strong></div>
           </div>
 
           <div class="table-wrapper">
@@ -166,11 +171,12 @@
                   <th>IDs Arquivos</th>
                   <th>Pedido</th>
                   <th>Tentativas</th>
+                  <th>Arquivo</th>
                   <th>Mensagem</th>
                 </tr>
               </thead>
               <tbody id="tbodyConsultas">
-                <tr><td colspan="11">Nenhum dado carregado.</td></tr>
+                <tr><td colspan="12">Nenhum dado carregado.</td></tr>
               </tbody>
             </table>
           </div>
