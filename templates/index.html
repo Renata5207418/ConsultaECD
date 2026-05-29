@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Consulta ECD - ReceitanetBX</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-icon">ECD</div>
+        <div class="brand-text">
+          <h1>Consulta ECD</h1>
+          <p>ReceitanetBX</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-section="nova-consulta" title="Nova Consulta">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          <span>Nova Consulta</span>
+        </button>
+        <button class="nav-item" data-section="resultados" title="Resultados">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          <span>Resultados</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span id="workerBadge" class="badge badge-idle">Aguardando</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="btnToggleSidebar" class="toggle-btn" title="Recolher/Expandir Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <div>
+            <h2 id="pageTitle">Nova Consulta</h2>
+            <p id="pageSubtitle">Importe a planilha e o sistema já inicia a consulta pelo ReceitanetBX.</p>
+          </div>
+        </div>
+      </header>
+
+      <section id="section-nova-consulta" class="section active">
+        <div class="cards">
+          <div class="card stat-card"><span>Pendentes</span><strong id="statPendente">0</strong></div>
+          <div class="card stat-card info"><span>Consultando</span><strong id="statProcessando">0</strong></div>
+          <div class="card stat-card success"><span>Encontradas</span><strong id="statEncontrado">0</strong></div>
+          <div class="card stat-card warning"><span>Não encontradas | Sem Lançamentos</span><strong id="statNaoEncontrada">0</strong></div>
+          <div class="card stat-card danger"><span>Erros</span><strong id="statErro">0</strong></div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <div class="card-title-row">
+              <div>
+                <h3>Nova consulta</h3>
+                <p class="muted">Envie uma planilha .xlsx com a coluna CNPJ. Ao clicar em importar, o sistema salva a planilha, cria a fila no MongoDB e inicia a consulta automaticamente.</p>
+              </div>
+            </div>
+
+            <form id="formImportar" class="import-form">
+              <div class="form-row">
+                <label>Planilha .xlsx</label>
+                <div class="file-drop-area" id="fileDropArea">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                  <span class="file-msg" id="fileMsg">Clique ou arraste o arquivo .xlsx aqui</span>
+                  <input id="arquivo" name="arquivo" type="file" accept=".xlsx" required />
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div class="form-row">
+                  <label for="anoCalendario">Ano-calendário</label>
+                  <input id="anoCalendario" name="ano_calendario" type="number" value="2024" min="2000" max="2100" required />
+                </div>
+              </div>
+
+              <label class="checkbox-row">
+                <input id="solicitarArquivos" type="checkbox" />
+                <span>Solicitar arquivos automaticamente quando encontrar ECD</span>
+              </label>
+
+              <div class="button-row">
+                <button id="btnImportarIniciar" class="btn btn-primary" color="grey" type="button">Importar e iniciar consultas</button>
+              </div>
+            </form>
+            <div id="importResultado" class="result-box hidden"></div>
+          </div>
+
+          <div class="card">
+            <h3>Lote atual</h3>
+            <div class="status-box">
+              <p><span>Arquivo:</span> <strong id="loteArquivo">-</strong></p>
+              <p><span>Ano:</span> <strong id="loteAno">-</strong></p>
+              <p><span>Status:</span> <strong id="loteStatus">-</strong></p>
+              <p><span>Total importado:</span> <strong id="loteTotal">-</strong></p>
+              <p><span>Válidos:</span> <strong id="loteValidos">-</strong></p>
+              <p><span>Inválidos:</span> <strong id="loteInvalidos">-</strong></p>
+            </div>
+
+            <div class="live-box" id="liveBox">
+              <div class="live-head">
+                <span id="liveDot" class="live-dot"></span>
+                <strong id="workerTitulo">Aguardando</strong>
+              </div>
+              <p id="workerMensagem">Nenhuma consulta em execução.</p>
+
+              <div class="status-box compact">
+                <p><span>Último CNPJ:</span> <strong id="workerUltimoCnpj">-</strong></p>
+                <p><span>Início:</span> <strong id="workerInicio">-</strong></p>
+                <p><span>Fim:</span> <strong id="workerFim">-</strong></p>
+              </div>
+
+              <div class="button-row mini-actions">
+                <button id="btnPausar" class="btn btn-secondary btn-small" type="button">Pausar</button>
+                <button id="btnContinuar" class="btn btn-secondary btn-small" type="button">Continuar</button>
+                <button id="btnParar" class="btn btn-danger btn-small" type="button">Parar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="section-resultados" class="section">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Resultados</h3>
+              <p class="muted">Registros do lote atual salvos no MongoDB a partir da planilha importada.</p>
+            </div>
+
+            <div class="filters">
+              <select id="filtroStatus">
+                <option value="">Todos os Status</option>
+                <option value="PENDENTE">Pendentes</option>
+                <option value="PROCESSANDO">Processando</option>
+                <option value="ENCONTRADO">Encontradas</option>
+                <option value="SOLICITADO">Solicitadas</option>
+                <option value="NAO_ENCONTRADA">Não encontradas</option>
+                <option value="CNPJ_INVALIDO">CNPJ inválido</option>
+                <option value="ERRO">Erros</option>
+              </select>
+              <button id="btnAtualizarResultados" class="btn btn-secondary" type="button">Atualizar</button>
+              <a id="btnExportarExcel" class="btn btn-primary" href="/api/exportar?lote_id=atual">Exportar Excel</a>
+              <button id="btnReprocessarErros" class="btn btn-warning" type="button">Reprocessar erros</button>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Código</th>
+                  <th>Razão Social</th>
+                  <th>CNPJ</th>
+                  <th>Ano</th>
+                  <th>Status</th>
+                  <th>Qtd</th>
+                  <th>IDs Arquivos</th>
+                  <th>Pedido</th>
+                  <th>Tentativas</th>
+                  <th>Mensagem</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyConsultas">
+                <tr><td colspan="11">Nenhum dado carregado.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
