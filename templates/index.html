@@ -130,20 +130,10 @@
             </div>
 
             <div class="filters">
-              <select id="filtroStatus">
-                <option value="">Todos os Status</option>
-                <option value="PENDENTE">Pendentes</option>
-                <option value="PROCESSANDO">Processando</option>
-                <option value="ENCONTRADO">Encontradas</option>
-                <option value="AGUARDANDO_DOWNLOAD">Aguardando download</option>
-                <option value="BAIXADO">Baixadas</option>
-                <option value="NAO_ENCONTRADA">Não encontradas</option>
-                <option value="CNPJ_INVALIDO">CNPJ inválido</option>
-                <option value="ERRO">Erros</option>
-                <option value="ERRO_DOWNLOAD">Erro download</option>
-              </select>
-              <button id="btnAtualizarResultados" class="btn btn-secondary" type="button">Atualizar</button>
-              <button id="btnBaixarZip" class="btn btn-success" type="button" disabled>Baixar ZIP do lote</button>
+              <button id="btnAtualizarResultados" class="btn btn-secondary btn-icon" type="button" title="Atualizar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              </button>
+              <button id="btnBaixarZip" class="btn btn-success" type="button" disabled>Baixar ZIP</button>
               <a id="btnExportarExcel" class="btn btn-primary" href="/api/exportar?lote_id=atual">Exportar Excel</a>
               <button id="btnReprocessarErros" class="btn btn-warning" type="button">Reprocessar erros</button>
             </div>
@@ -157,6 +147,8 @@
             <div><span>Última verificação</span><strong id="downloadUltimaVerificacao">-</strong></div>
           </div>
 
+         <input type="hidden" id="filtroStatus" value="" />
+
           <div class="table-wrapper">
             <table>
               <thead>
@@ -166,7 +158,32 @@
                   <th>Razão Social</th>
                   <th>CNPJ</th>
                   <th>Ano</th>
-                  <th>Status</th>
+                  <th class="th-filter">
+                    <div class="th-inner">
+                      Status
+                      <div class="custom-filter">
+                        <button class="filter-toggle" id="btnFilterStatus" title="Filtrar por Status">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                          </svg>
+                        </button>
+
+                        <div class="filter-menu" id="menuFilterStatus">
+                          <div class="filter-menu-header">Filtrar por Status</div>
+                          <div class="filter-option selected" data-value="">Todos</div>
+                          <div class="filter-option" data-value="PENDENTE">Pendente</div>
+                          <div class="filter-option" data-value="PROCESSANDO">Processando</div>
+                          <div class="filter-option" data-value="ENCONTRADO">Encontrado</div>
+                          <div class="filter-option" data-value="AGUARDANDO_DOWNLOAD">Aguard. Download</div>
+                          <div class="filter-option" data-value="BAIXADO">Baixado</div>
+                          <div class="filter-option" data-value="NAO_ENCONTRADA">Não Encontrada</div>
+                          <div class="filter-option" data-value="CNPJ_INVALIDO">CNPJ Inválido</div>
+                          <div class="filter-option" data-value="ERRO">Erro</div>
+                          <div class="filter-option" data-value="ERRO_DOWNLOAD">Erro Download</div>
+                        </div>
+                      </div>
+                    </div>
+                  </th>
                   <th>Qtd</th>
                   <th>IDs Arquivos</th>
                   <th>Pedido</th>

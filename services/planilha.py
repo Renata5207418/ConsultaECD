@@ -56,8 +56,33 @@ def ler_planilha_entrada(caminho_arquivo: Path, ano_calendario: int, lote_id: st
     ws = wb.active
 
     linha_cabecalho, coluna_cnpj = localizar_coluna_cnpj(ws)
-    _, coluna_codigo = localizar_coluna_por_alias(ws, ["codigo", "cod", "código", "codigo dominio", "cod dominio", "codi_emp"])
-    _, coluna_razao = localizar_coluna_por_alias(ws, ["razao social", "razão social", "empresa", "nome", "cliente"])
+    _, coluna_codigo = localizar_coluna_por_alias(ws, [
+        "codigo",
+        "cod",
+        "código",
+        "codigo dominio",
+        "cod dominio",
+        "codi_emp"
+    ])
+    _, coluna_razao = localizar_coluna_por_alias(ws, [
+        "razao social",
+        "razão social",
+        "razao",
+        "razão",
+        "razao social empresa",
+        "razão social empresa",
+
+        "nome",
+        "nome empresa",
+        "nome da empresa",
+        "nome do cliente",
+        "nome cliente",
+        "cliente",
+
+        "empresa",
+        "empresas",
+        "nome empresarial",
+    ])
 
     registros = []
     vistos = set()

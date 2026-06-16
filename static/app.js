@@ -175,7 +175,7 @@ function atualizarResumoDownloads(lote = null) {
   const btnZip = qs("#btnBaixarZip");
   if (btnZip) {
     btnZip.disabled = baixados <= 0;
-    btnZip.textContent = baixados > 0 ? `Baixar ZIP do lote (${baixados})` : "Baixar ZIP do lote";
+    btnZip.textContent = baixados > 0 ? `Baixar ZIP (${baixados})` : "Baixar ZIP";
   }
 }
 
@@ -471,7 +471,78 @@ function bindEvents() {
 
   qs("#btnImportarIniciar")?.addEventListener("click", importarEIniciarConsultas);
   qs("#btnReprocessarErros")?.addEventListener("click", reprocessarErros);
-  qs("#filtroStatus")?.addEventListener("change", carregarConsultas);
+
+  // --- NOVA LÓGICA DO FILTRO ESTILO EXCEL (POPOVER DINÂMICO) ---
+  const btnFilter = qs('#btnFilterStatus');
+  const menuFilter = qs('#menuFilterStatus');
+  const filterOptions = qsa('.filter-option');
+  const inputFiltroStatus = qs('#filtroStatus');
+
+  if (btnFilter && menuFilter && inputFiltroStatus) {
+
+    // 1. Move o menu para a raiz do documento (Body) para escapar do overflow: auto da tabela
+    document.body.appendChild(menuFilter);
+
+    // 2. Abre/Fecha o menu calculando a posição exata
+    btnFilter.addEventListener('click', (e) => {
+      e.stopPropagation();
+
+      if (menuFilter.classList.contains('show')) {
+        menuFilter.classList.remove('show');
+        return;
+      }
+
+      // Calcula as coordenadas do funil na tela
+      const rect = btnFilter.getBoundingClientRect();
+
+      // Aplica posição fixa baseada nas coordenadas atuais
+      menuFilter.style.position = 'fixed';
+      menuFilter.style.top = (rect.bottom + 6) + 'px';
+      menuFilter.style.left = rect.left + 'px';
+      menuFilter.style.zIndex = '999999';
+
+      menuFilter.classList.add('show');
+    });
+
+    // 3. Fecha o menu se clicar fora
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#menuFilterStatus') && e.target !== btnFilter && !btnFilter.contains(e.target)) {
+        menuFilter.classList.remove('show');
+      }
+    });
+
+    // 4. Esconde o menu se ocorrer scroll na tabela, para ele não ficar "flutuando errado"
+    const tableWrapper = qs('.table-wrapper');
+    if (tableWrapper) {
+       tableWrapper.addEventListener('scroll', () => {
+          menuFilter.classList.remove('show');
+       });
+    }
+
+    // 5. Ação ao clicar numa opção do menu flutuante
+    filterOptions.forEach(opt => {
+      opt.addEventListener('click', () => {
+        // Reseta as opções selecionadas
+        filterOptions.forEach(o => o.classList.remove('selected'));
+        opt.classList.add('selected');
+
+        const valorSelecionado = opt.dataset.value;
+
+        // Pinta o botão de filtro se estiver ativo
+        if (valorSelecionado !== "") {
+          btnFilter.classList.add('active-filter');
+        } else {
+          btnFilter.classList.remove('active-filter');
+        }
+
+        menuFilter.classList.remove('show');
+        inputFiltroStatus.value = valorSelecionado;
+
+        // Dispara a atualização visual e chamada pra API
+        carregarConsultas();
+      });
+    });
+  }
 }
 
 async function boot() {
