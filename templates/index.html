@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Consulta ECD - ReceitanetBX</title>
+  <title>Consulta ECD|ECF - ReceitanetBX</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-icon">ECD</div>
+        <div class="brand-icon">ECD|ECF</div>
         <div class="brand-text">
-          <h1>Consulta ECD</h1>
+          <h1>Consulta ECD | ECF</h1>
           <p>ReceitanetBX</p>
         </div>
       </div>
@@ -79,11 +79,24 @@
                   <label for="anoCalendario">Ano-calendário</label>
                   <input id="anoCalendario" name="ano_calendario" type="number" value="2024" min="2000" max="2100" required />
                 </div>
+                <div class="form-row">
+                  <label>Tipo de Declaração</label>
+                  <div class="radio-group">
+                    <label class="radio-btn">
+                      <input type="radio" name="tipo_declaracao" value="ECD" checked>
+                      <span>ECD</span>
+                    </label>
+                    <label class="radio-btn">
+                      <input type="radio" name="tipo_declaracao" value="ECF">
+                      <span>ECF</span>
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <label class="checkbox-row">
                 <input id="solicitarArquivos" type="checkbox" />
-                <span>Solicitar arquivos automaticamente quando encontrar ECD</span>
+                <span>Solicitar arquivos automaticamente quando encontrar ECD | ECF</span>
               </label>
 
               <div class="button-row">
@@ -97,6 +110,7 @@
             <h3>Lote atual</h3>
             <div class="status-box">
               <p><span>Arquivo:</span> <strong id="loteArquivo">-</strong></p>
+              <p><span>Tipo:</span> <strong id="loteTipo">-</strong></p>
               <p><span>Ano:</span> <strong id="loteAno">-</strong></p>
               <p><span>Status:</span> <strong id="loteStatus">-</strong></p>
               <p><span>Total importado:</span> <strong id="loteTotal">-</strong></p>
@@ -130,6 +144,7 @@
             </div>
 
             <div class="filters">
+              <input type="text" id="inputBusca" class="search-input" placeholder="Buscar CNPJ, Código ou Nome..." />
               <button id="btnAtualizarResultados" class="btn btn-secondary btn-icon" type="button" title="Atualizar">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
               </button>
@@ -158,6 +173,7 @@
                   <th>Razão Social</th>
                   <th>CNPJ</th>
                   <th>Ano</th>
+                  <th>Tipo</th>
                   <th class="th-filter">
                     <div class="th-inner">
                       Status
@@ -196,6 +212,16 @@
                 <tr><td colspan="12">Nenhum dado carregado.</td></tr>
               </tbody>
             </table>
+          </div>
+          <div class="pagination-container" id="paginationControls">
+            <div class="pagination-info">
+              Mostrando <span id="pageStart">0</span> a <span id="pageEnd">0</span> de <span id="pageTotal">0</span> registros
+            </div>
+            <div class="pagination-buttons">
+              <button id="btnPrevPage" class="btn btn-secondary btn-small" type="button" disabled>Anterior</button>
+              <span id="pageIndicator" class="page-indicator">Página 1 de 1</span>
+              <button id="btnNextPage" class="btn btn-secondary btn-small" type="button" disabled>Próxima</button>
+            </div>
           </div>
         </div>
       </section>

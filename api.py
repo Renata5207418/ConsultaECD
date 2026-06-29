@@ -1,11 +1,9 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-
 from bson import ObjectId
 from flask import Blueprint, jsonify, request, send_file
 from werkzeug.utils import secure_filename
-
 import database
 from config import RESULT_DIR, UPLOAD_DIR
 from services.downloads_receitanetbx import criar_zip_lote
@@ -87,6 +85,8 @@ def importar():
     solicitar = form_bool("solicitar", False)
     iniciar_apos_importar = form_bool("iniciar", False)
 
+    tipo_declaracao = request.form.get("tipo_declaracao", "ECD").upper()
+
     try:
         ano_calendario = int(ano_calendario)
     except ValueError:
@@ -105,12 +105,14 @@ def importar():
         caminho_arquivo=str(caminho_arquivo),
         ano_calendario=ano_calendario,
         solicitar=solicitar,
+        tipo_declaracao=tipo_declaracao  # 2. PASSE O TIPO PARA O LOTE
     )
 
     logger.info(
-        "[API] Planilha recebida | arquivo=%s | lote_id=%s | ano=%s | solicitar=%s | iniciar=%s",
+        "[API] Planilha recebida | arquivo=%s | lote_id=%s | tipo=%s | ano=%s | solicitar=%s | iniciar=%s",
         arquivo.filename,
         lote_id,
+        tipo_declaracao,
         ano_calendario,
         solicitar,
         iniciar_apos_importar,
@@ -118,6 +120,11 @@ def importar():
 
     try:
         leitura = ler_planilha_entrada(caminho_arquivo, ano_calendario, lote_id)
+
+        # 3. INJETE O TIPO EM CADA REGISTRO ANTES DE SALVAR
+        for reg in leitura["registros"]:
+            reg["tipo_declaracao"] = tipo_declaracao
+
         inseridos, atualizados = database.salvar_consultas_importadas(leitura["registros"])
 
         database.atualizar_lote(lote_id, {
@@ -210,7 +217,6 @@ def iniciar():
         return erro_json(str(e), 400)
 
 
-
 @api_bp.post("/reprocessar-erros")
 def reprocessar_erros():
     body = request.get_json(silent=True) or {}
@@ -291,9 +297,10 @@ def exportar():
     if not consultas_exportacao:
         return erro_json("Nenhuma consulta encontrada para exportar.", 404)
 
+    tipo_declaracao = consultas_exportacao[0].get("tipo_declaracao", "ECD").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     sufixo_lote = f"_{lote_id}" if lote_id else ""
-    caminho_saida = RESULT_DIR / f"resultado_ecd{sufixo_lote}_{timestamp}.xlsx"
+    caminho_saida = RESULT_DIR / f"resultado_{tipo_declaracao}{sufixo_lote}_{timestamp}.xlsx"
 
     exportar_consultas_excel(consultas_exportacao, caminho_saida)
     logger.info("[API] Excel exportado | lote_id=%s | arquivo=%s", lote_id, caminho_saida)

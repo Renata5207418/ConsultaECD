@@ -12,9 +12,18 @@ from config import RECEITANETBX_ENDPOINT
 logger = logging.getLogger(__name__)
 
 PERFIL = "proc"
-SISTEMA = "SPED Contábil"
-TIPO_ARQUIVO = "Escrituração Contábil Digital"
-TIPO_PESQUISA = "Por Período da Escrituração"
+DECLARACAO_CONFIG = {
+    "ECD": {
+        "sistema": "SPED Contábil",
+        "tipo_arquivo": "Escrituração Contábil Digital",
+        "tipo_pesquisa": "Por Período da Escrituração"
+    },
+    "ECF": {
+        "sistema": "SPED ECF",
+        "tipo_arquivo": "Escrituração",
+        "tipo_pesquisa": "Período da Escrituração"
+    }
+}
 
 
 def limpar_cnpj(cnpj: str) -> str:
@@ -147,20 +156,39 @@ def chamar_soap(operacao: str, xml_entrada: str, timeout: int = 120) -> Dict:
         return resultado
 
 
-def montar_xml_pesquisa(cnpj: str, ano: int) -> str:
+def montar_xml_pesquisa(cnpj: str, ano: int, tipo_declaracao: str = "ECD") -> str:
     data_inicio, data_fim = periodo_ano(ano)
+    config = DECLARACAO_CONFIG.get(tipo_declaracao.upper(), DECLARACAO_CONFIG["ECD"])
 
     return f"""<pesquisa>
   <identificacao
     perfil="{PERFIL}"
-    sistema="{SISTEMA}"
-    tipoarquivo="{TIPO_ARQUIVO}"
-    tipopesquisa="{TIPO_PESQUISA}"
+    sistema="{config['sistema']}"
+    tipoarquivo="{config['tipo_arquivo']}"
+    tipopesquisa="{config['tipo_pesquisa']}"
     nirepresentado="{cnpj}"
     tiponirepresentado="cnpj" />
   <campo nome="dataInicio" valor="{data_inicio}" />
   <campo nome="dataFim" valor="{data_fim}" />
 </pesquisa>"""
+
+
+def montar_xml_solicitacao(cnpj: str, ids_arquivos: List[str], tipo_declaracao: str = "ECD") -> str:
+    arquivos_xml = "\n".join(f'    <arquivo id="{arquivo_id}" />' for arquivo_id in ids_arquivos)
+    config = DECLARACAO_CONFIG.get(tipo_declaracao.upper(), DECLARACAO_CONFIG["ECD"])
+
+    return f"""<pedido>
+  <identificacao
+    perfil="{PERFIL}"
+    sistema="{config['sistema']}"
+    tipoarquivo="{config['tipo_arquivo']}"
+    tipopesquisa="{config['tipo_pesquisa']}"
+    nirepresentado="{cnpj}"
+    tiponirepresentado="cnpj" />
+  <arquivos>
+{arquivos_xml}
+  </arquivos>
+</pedido>"""
 
 
 def extrair_ids_arquivos(saida_xml: Optional[str]) -> List[str]:
@@ -179,9 +207,21 @@ def extrair_ids_arquivos(saida_xml: Optional[str]) -> List[str]:
         return []
 
 
-def pesquisar_ecd(cnpj: str, ano: int) -> Dict:
-    logger.info("[ReceitanetBX] PesquisarArquivos iniciado | cnpj=%s | ano=%s", cnpj, ano)
-    xml_entrada = montar_xml_pesquisa(cnpj, ano)
+def extrair_numero_pedido(saida_xml: Optional[str]) -> Optional[str]:
+    if not saida_xml:
+        return None
+
+    try:
+        root = ET.fromstring(saida_xml.encode("utf-8"))
+        return root.attrib.get("id")
+    except Exception:
+        logger.exception("[ReceitanetBX] Não foi possível extrair número do pedido da saída XML")
+        return None
+
+
+def pesquisar_declaracao(cnpj: str, ano: int, tipo_declaracao: str = "ECD") -> Dict:
+    logger.info("[ReceitanetBX] PesquisarArquivos iniciado | tipo=%s | cnpj=%s | ano=%s", tipo_declaracao, cnpj, ano)
+    xml_entrada = montar_xml_pesquisa(cnpj, ano, tipo_declaracao)
     resposta = chamar_soap("PesquisarArquivos", xml_entrada)
 
     ids = extrair_ids_arquivos(resposta.get("saida_xml"))
@@ -189,13 +229,14 @@ def pesquisar_ecd(cnpj: str, ano: int) -> Dict:
 
     if ids:
         status = "ENCONTRADO"
-    elif "Nenhum arquivo foi encontrado" in mensagem:
+    elif "Nenhum arquivo foi encontrado" in mensagem or "Não encontrado nenhum arquivo" in mensagem:
         status = "NAO_ENCONTRADA"
     else:
         status = "ERRO"
 
     logger.info(
-        "[ReceitanetBX] PesquisarArquivos concluído | cnpj=%s | ano=%s | status=%s | qtd_ids=%s | mensagem=%s",
+        "[ReceitanetBX] PesquisarArquivos concluído | tipo=%s | cnpj=%s | ano=%s | status=%s | qtd_ids=%s | mensagem=%s",
+        tipo_declaracao,
         cnpj,
         ano,
         status,
@@ -215,44 +256,16 @@ def pesquisar_ecd(cnpj: str, ano: int) -> Dict:
     }
 
 
-def montar_xml_solicitacao(cnpj: str, ids_arquivos: List[str]) -> str:
-    arquivos_xml = "\n".join(f'    <arquivo id="{arquivo_id}" />' for arquivo_id in ids_arquivos)
-
-    return f"""<pedido>
-  <identificacao
-    perfil="{PERFIL}"
-    sistema="{SISTEMA}"
-    tipoarquivo="{TIPO_ARQUIVO}"
-    tipopesquisa="{TIPO_PESQUISA}"
-    nirepresentado="{cnpj}"
-    tiponirepresentado="cnpj" />
-  <arquivos>
-{arquivos_xml}
-  </arquivos>
-</pedido>"""
-
-
-def extrair_numero_pedido(saida_xml: Optional[str]) -> Optional[str]:
-    if not saida_xml:
-        return None
-
-    try:
-        root = ET.fromstring(saida_xml.encode("utf-8"))
-        return root.attrib.get("id")
-    except Exception:
-        logger.exception("[ReceitanetBX] Não foi possível extrair número do pedido da saída XML")
-        return None
-
-
-def solicitar_arquivos(cnpj: str, ids_arquivos: List[str]) -> Dict:
-    logger.info("[ReceitanetBX] SolicitarArquivos iniciado | cnpj=%s | qtd_ids=%s", cnpj, len(ids_arquivos))
-    xml_entrada = montar_xml_solicitacao(cnpj, ids_arquivos)
+def solicitar_arquivos(cnpj: str, ids_arquivos: List[str], tipo_declaracao: str = "ECD") -> Dict:
+    logger.info("[ReceitanetBX] SolicitarArquivos iniciado | tipo=%s | cnpj=%s | qtd_ids=%s", tipo_declaracao, cnpj, len(ids_arquivos))
+    xml_entrada = montar_xml_solicitacao(cnpj, ids_arquivos, tipo_declaracao)
     resposta = chamar_soap("SolicitarArquivos", xml_entrada)
 
     numero_pedido = extrair_numero_pedido(resposta.get("saida_xml"))
 
     logger.info(
-        "[ReceitanetBX] SolicitarArquivos concluído | cnpj=%s | numero_pedido=%s | mensagem=%s",
+        "[ReceitanetBX] SolicitarArquivos concluído | tipo=%s | cnpj=%s | numero_pedido=%s | mensagem=%s",
+        tipo_declaracao,
         cnpj,
         numero_pedido,
         resposta.get("mensagem"),

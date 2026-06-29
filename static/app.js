@@ -15,6 +15,10 @@ let atualizandoConsultas = false;
 let verificandoDownloads = false;
 let ultimoResumo = {};
 let ultimaMensagemFlash = "";
+let currentPage = 1;
+const rowsPerPage = 50;
+let allConsultas = [];
+let filteredConsultas = [];
 
 function qs(selector) {
   return document.querySelector(selector);
@@ -182,6 +186,7 @@ function atualizarResumoDownloads(lote = null) {
 function atualizarLote(lote = {}) {
   loteAtualId = lote.id || lote._id || loteAtualId;
   setText("loteArquivo", lote.nome_original || lote.arquivo_original || lote.nome_arquivo || lote.filename || lote.arquivo || "-");
+  setText("loteTipo", lote.tipo_declaracao || "ECD");
   setText("loteAno", lote.ano_calendario || lote.ano || "-");
   setText("loteStatus", lote.status || "-");
   setText("loteTotal", lote.total_importado || lote.total_linhas || lote.total || lote.total_registros || "-");
@@ -259,51 +264,126 @@ async function carregarConsultas() {
 
   const status = qs("#filtroStatus")?.value || "";
   const params = new URLSearchParams();
-  params.set("limit", "500");
+  params.set("limit", "2000");
   if (status) params.set("status", status);
   params.set("lote_id", loteAtualId || "atual");
 
   try {
     const data = await apiGet(`/api/consultas?${params.toString()}`);
-    const consultas = data.consultas || data.items || [];
+    allConsultas = data.consultas || data.items || [];
 
-    if (!consultas.length) {
-      tbody.innerHTML = `<tr><td colspan="12">Nenhuma consulta encontrada.</td></tr>`;
-      return;
-    }
+    // Mantém a página atual caso o total de registros mude pelos filtros
+    const totalPages = Math.ceil(allConsultas.length / rowsPerPage) || 1;
+    if (currentPage > totalPages) currentPage = totalPages;
 
-    tbody.innerHTML = consultas.map(item => {
-      const id = getMongoId(item);
-      const status = item.status || "";
-      const statusClass = `status-${status}`;
-      const idsArquivos = normalizarListaIds(item.ids_arquivos || item.arquivos_ids || item.ids);
-      const qtdArquivos = item.qtd_arquivos ?? item.quantidade_arquivos ?? item.qtd ?? "";
-      const numeroPedido = item.numero_pedido || item.pedido || "";
-      const mensagem = item.mensagem_download || item.mensagem || item.mensagem_receitanetbx || item.mensagem_solicitacao || item.observacao || "";
-
-      return `
-        <tr>
-          <td title="${escapeHtml(id)}">${escapeHtml(id).slice(-8)}</td>
-          <td>${escapeHtml(item.codigo || item.codigo_empresa || "")}</td>
-          <td title="${escapeHtml(item.razao_social || "")}">${escapeHtml(item.razao_social || "")}</td>
-          <td>${formatarCnpj(item.cnpj)}</td>
-          <td>${escapeHtml(item.ano_calendario || item.ano || "")}</td>
-          <td><span class="status ${statusClass}">${escapeHtml(status)}</span></td>
-          <td>${escapeHtml(qtdArquivos)}</td>
-          <td title="${escapeHtml(idsArquivos)}">${escapeHtml(idsArquivos)}</td>
-          <td title="${escapeHtml(numeroPedido)}">${escapeHtml(numeroPedido)}</td>
-          <td>${escapeHtml(item.tentativas ?? "")}</td>
-          <td>${montarLinkArquivo(item)}</td>
-          <td title="${escapeHtml(mensagem)}">${escapeHtml(mensagem)}</td>
-        </tr>
-      `;
-    }).join("");
+    filtrarE_Renderizar();
   } catch (err) {
     console.error("Erro ao carregar consultas:", err);
     tbody.innerHTML = `<tr><td colspan="12">Erro ao carregar consultas: ${escapeHtml(err.message)}</td></tr>`;
   } finally {
     atualizandoConsultas = false;
   }
+}
+
+function filtrarE_Renderizar() {
+  const termo = (qs("#inputBusca")?.value || "").toLowerCase().trim();
+
+  // Função interna para limpar a string e facilitar a busca
+  const limparTexto = (txt) => String(txt || "").replace(/[^\w\s]/gi, '').replace(/\s+/g, '').toLowerCase();
+
+  const termoLimpo = limparTexto(termo);
+
+  if (!termoLimpo) {
+    filteredConsultas = [...allConsultas];
+  } else {
+    filteredConsultas = allConsultas.filter(item => {
+      // Pega o CNPJ puro (só números) da base de dados
+      const cnpjPuro = String(item.cnpj || "").toLowerCase();
+      // Pega o CNPJ original (como veio da planilha) se existir
+      const cnpjOriginal = limparTexto(item.cnpj_original);
+
+      const codigo = String(item.codigo || item.codigo_empresa || "").toLowerCase();
+      const razao = String(item.razao_social || "").toLowerCase();
+
+      // Testa a correspondência ignorando formatação
+      return cnpjPuro.includes(termoLimpo) ||
+             cnpjOriginal.includes(termoLimpo) ||
+             codigo.includes(termo) ||
+             razao.includes(termo);
+    });
+  }
+
+  // Recalcula a paginação com base no resultado da busca
+  const totalPages = Math.ceil(filteredConsultas.length / rowsPerPage) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+
+  renderTablePage(currentPage);
+}
+
+function renderTablePage(page) {
+  const tbody = qs("#tbodyConsultas");
+  if (!tbody) return;
+
+  const total = filteredConsultas.length;
+  if (total === 0) {
+    tbody.innerHTML = `<tr><td colspan="12">Nenhuma consulta encontrada.</td></tr>`;
+    atualizarControlesPaginacao(0, 0, 0, 1);
+    return;
+  }
+
+  const totalPages = Math.ceil(total / rowsPerPage);
+  if (page < 1) page = 1;
+  if (page > totalPages) page = totalPages;
+  currentPage = page;
+
+  // Calcula o início e o fim da fatia
+  const start = (page - 1) * rowsPerPage;
+  const end = Math.min(start + rowsPerPage, total);
+  const pagedData = filteredConsultas.slice(start, end);
+
+  tbody.innerHTML = pagedData.map(item => {
+    const id = getMongoId(item);
+    const status = item.status || "";
+    const statusClass = `status-${status}`;
+    const idsArquivos = normalizarListaIds(item.ids_arquivos || item.arquivos_ids || item.ids);
+    const qtdArquivos = item.qtd_arquivos ?? item.quantidade_arquivos ?? item.qtd ?? "";
+    const numeroPedido = item.numero_pedido || item.pedido || "";
+    const mensagem = item.mensagem_download || item.mensagem || item.mensagem_receitanetbx || item.mensagem_solicitacao || item.observacao || "";
+    const tipoDeclaracao = item.tipo_declaracao || "ECD";
+
+    return `
+      <tr>
+        <td title="${escapeHtml(id)}">${escapeHtml(id).slice(-8)}</td>
+        <td>${escapeHtml(item.codigo || item.codigo_empresa || "")}</td>
+        <td title="${escapeHtml(item.razao_social || "")}">${escapeHtml(item.razao_social || "")}</td>
+        <td>${formatarCnpj(item.cnpj)}</td>
+        <td>${escapeHtml(item.ano_calendario || item.ano || "")}</td>
+        <td><span class="badge badge-idle">${escapeHtml(tipoDeclaracao)}</span></td>
+        <td><span class="status ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${escapeHtml(qtdArquivos)}</td>
+        <td title="${escapeHtml(idsArquivos)}">${escapeHtml(idsArquivos)}</td>
+        <td title="${escapeHtml(numeroPedido)}">${escapeHtml(numeroPedido)}</td>
+        <td>${escapeHtml(item.tentativas ?? "")}</td>
+        <td>${montarLinkArquivo(item)}</td>
+        <td title="${escapeHtml(mensagem)}">${escapeHtml(mensagem)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  atualizarControlesPaginacao(start + 1, end, total, totalPages);
+}
+
+function atualizarControlesPaginacao(start, end, total, totalPages) {
+  setText("pageStart", start);
+  setText("pageEnd", end);
+  setText("pageTotal", total);
+  setText("pageIndicator", `Página ${currentPage} de ${totalPages || 1}`);
+
+  const btnPrev = qs("#btnPrevPage");
+  const btnNext = qs("#btnNextPage");
+
+  if (btnPrev) btnPrev.disabled = currentPage <= 1;
+  if (btnNext) btnNext.disabled = currentPage >= totalPages;
 }
 
 async function importarPlanilha() {
@@ -335,6 +415,9 @@ async function importarPlanilha() {
 
   const r = data.resultado || data;
   loteAtualId = r.lote_id || loteAtualId;
+
+  currentPage = 1;
+  allConsultas = [];
 
   resultBox.innerHTML = `
     <strong>Importação concluída.</strong><br>
@@ -447,6 +530,13 @@ function bindEvents() {
   qsa(".nav-item").forEach(btn => btn.addEventListener("click", () => trocarSecao(btn.dataset.section)));
   qs("#btnAtualizarResultados")?.addEventListener("click", atualizarTudo);
   qs("#btnBaixarZip")?.addEventListener("click", baixarZipLote);
+  qs("#btnPrevPage")?.addEventListener("click", () => renderTablePage(currentPage - 1));
+  qs("#btnNextPage")?.addEventListener("click", () => renderTablePage(currentPage + 1));
+
+  qs("#inputBusca")?.addEventListener("input", () => {
+    currentPage = 1;
+    filtrarE_Renderizar();
+  });
 
   qs("#btnToggleSidebar")?.addEventListener("click", () => {
     qs("#sidebar")?.classList.toggle("collapsed");

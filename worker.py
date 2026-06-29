@@ -11,7 +11,7 @@ from config import (
     DOWNLOAD_CHECK_MAX_MINUTES,
 )
 from services.downloads_lote import verificar_downloads_lote
-from services.receitanetbx import pesquisar_ecd, solicitar_arquivos
+from services.receitanetbx import pesquisar_declaracao, solicitar_arquivos
 
 logger = logging.getLogger(__name__)
 
@@ -177,13 +177,17 @@ class WorkerECD:
                     cnpj = consulta.get("cnpj")
                     ano = int(consulta.get("ano_calendario"))
 
+                    # 1. ADICIONE ESTA LINHA: Recupera se é ECD ou ECF
+                    tipo_declaracao = consulta.get("tipo_declaracao", "ECD")
+
                     marcado = database.marcar_processando(consulta_id)
                     if not marcado:
                         continue
 
                     self._set_state(
                         fase="consulta",
-                        mensagem=f"Consultando CNPJ {cnpj} - ano {ano}.",
+                        # 2. ALTERE AQUI: Inclua a variável {tipo_declaracao} na mensagem
+                        mensagem=f"Consultando {tipo_declaracao} - CNPJ {cnpj} - ano {ano}.",
                         ultimo_cnpj=cnpj,
                         ultimo_ano=ano,
                         ultimo_status="PROCESSANDO",
@@ -214,7 +218,7 @@ class WorkerECD:
                             logger.warning("[WorkerECD] %s", mensagem)
                             continue
 
-                        resultado = pesquisar_ecd(cnpj, ano)
+                        resultado = pesquisar_declaracao(cnpj, ano, tipo_declaracao)
 
                         dados_atualizacao = {
                             "status": resultado["status"],
@@ -231,11 +235,12 @@ class WorkerECD:
                         ids_arquivos = resultado.get("ids_arquivos") or []
                         if solicitar and ids_arquivos:
                             logger.info(
-                                "[WorkerECD] ECD encontrada. Solicitando arquivos | cnpj=%s | qtd_ids=%s",
+                                "[WorkerECD] %s encontrada. Solicitando arquivos | cnpj=%s | qtd_ids=%s",
+                                tipo_declaracao,
                                 cnpj,
                                 len(ids_arquivos),
                             )
-                            solicitacao = solicitar_arquivos(cnpj, ids_arquivos)
+                            solicitacao = solicitar_arquivos(cnpj, ids_arquivos, tipo_declaracao)
                             numero_pedido = solicitacao.get("numero_pedido")
 
                             dados_atualizacao.update({
@@ -250,7 +255,7 @@ class WorkerECD:
                                 dados_atualizacao.update({
                                     "status": "AGUARDANDO_DOWNLOAD",
                                     "download_localizado": False,
-                                    "mensagem_download": "Pedido registrado. Aguardando o ReceitanetBX baixar o arquivo.",
+                                    "mensagem_download": "Pedido registrado. Aguardando baixar o arquivo.",
                                     "ultima_verificacao_download": None,
                                 })
                             else:

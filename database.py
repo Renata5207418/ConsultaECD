@@ -75,11 +75,12 @@ def resolver_lote_id(lote_id: Optional[str] = None) -> Optional[str]:
     return str(lote["_id"]) if lote else None
 
 
-def criar_lote(nome_original: str, caminho_arquivo: str, ano_calendario: int, solicitar: bool = False) -> str:
+def criar_lote(nome_original: str, caminho_arquivo: str, ano_calendario: int, solicitar: bool = False, tipo_declaracao: str = "ECD") -> str:
     doc = {
         "nome_original": nome_original,
         "caminho_arquivo": caminho_arquivo,
         "ano_calendario": ano_calendario,
+        "tipo_declaracao": tipo_declaracao.upper(),
         "solicitar": solicitar,
         "status": "IMPORTADO",
         "total_registros": 0,
@@ -133,6 +134,10 @@ def salvar_consultas_importadas(registros: List[Dict]) -> Tuple[int, int]:
             "razao_social": registro.get("razao_social"),
             "cnpj_original": registro.get("cnpj_original"),
             "linha_planilha": registro.get("linha_planilha"),
+
+            # ADICIONE ESTA LINHA AQUI:
+            "tipo_declaracao": registro.get("tipo_declaracao", "ECD"),
+
             "updated_at": agora(),
         }
 

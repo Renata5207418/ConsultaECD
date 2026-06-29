@@ -35,6 +35,8 @@ def configurar_logging() -> None:
 
 configurar_logging()
 
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
 import database  # noqa: E402
 from api import api_bp  # noqa: E402
 

@@ -152,7 +152,8 @@ def ler_planilha_entrada(caminho_arquivo: Path, ano_calendario: int, lote_id: st
 def exportar_consultas_excel(consultas: List[Dict], caminho_saida: Path) -> Path:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Resultado ECD"
+    tipo_declaracao = consultas[0].get("tipo_declaracao", "ECD").upper() if consultas else "ECD"
+    ws.title = f"Resultado {tipo_declaracao}"
 
     colunas = [
         ("Código", "codigo"),

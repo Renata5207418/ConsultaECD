@@ -258,9 +258,10 @@ def criar_zip_lote(consultas_baixadas: List[Dict], lote_id: str) -> Dict:
     if not consultas_baixadas:
         raise ValueError("Nenhum arquivo baixado encontrado para gerar ZIP.")
 
+    tipo_declaracao = consultas_baixadas[0].get("tipo_declaracao", "ECD").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     lote_limpo = _nome_seguro(str(lote_id or "atual"))[:24]
-    caminho_zip = ZIP_DIR / f"ecd_lote_{lote_limpo}_{timestamp}.zip"
+    caminho_zip = ZIP_DIR / f"{tipo_declaracao}_lote_{lote_limpo}_{timestamp}.zip"
     caminho_zip.parent.mkdir(parents=True, exist_ok=True)
 
     adicionados = 0
