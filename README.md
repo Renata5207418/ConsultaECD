@@ -1,42 +1,44 @@
-# Consulta ECD - ReceitanetBX
+# Consulta ECD | ECF - ReceitanetBX
 
-Sistema web para importar uma planilha de empresas, consultar a existência de arquivos ECD pelo ReceitanetBX e exportar o resultado em Excel.
+Sistema web para importar uma planilha de empresas, consultar a existência de arquivos ECD e ECF pelo ReceitanetBX, realizar o download automático dos arquivos encontrados e exportar os resultados consolidados (Excel e ZIP).
 
 O fluxo principal é simples:
 
-1. O usuário envia uma planilha `.xlsx`.
-2. O sistema identifica os CNPJs da planilha.
-3. O backend consulta o ReceitanetBX.
-4. A tela acompanha o andamento da consulta.
-5. O resultado fica disponível para visualização e exportação em Excel.
+1. O usuário envia uma planilha `.xlsx` e seleciona o tipo de declaração (ECD ou ECF).
+2. O sistema identifica os CNPJs e cria uma fila de processamento.
+3. O backend consulta o ReceitanetBX (e solicita os arquivos, caso desejado).
+4. O sistema monitora a pasta do ReceitanetBX e identifica os arquivos baixados automaticamente.
+5. A tela acompanha o andamento da consulta e dos downloads em tempo real.
+6. O resultado fica disponível para visualização, exportação em Excel e download em ZIP.
 
+> ⚠️ **AVISO IMPORTANTE**: Este sistema não acessa a base da Receita Federal diretamente pela internet.
+Ele atua como uma interface de automação que se comunica com o aplicativo oficial ReceitanetBX. 
+Portanto, é obrigatório ter o ReceitanetBX Serviços instalado e rodando na máquina para que as consultas e downloads funcionem.
 ---
 
 ## Funcionalidades
 
 * Importação de planilha `.xlsx`.
-* Leitura automática da coluna `CNPJ`.
-* Leitura opcional de código e razão social.
-* Limpeza automática do CNPJ antes da consulta.
-* Consulta da ECD por ano-calendário.
+* Leitura automática da coluna `CNPJ` (ignorando formatações).
+* Leitura opcional de `Código` e `Razão Social`.
+* Consulta de **ECD** ou **ECF** por ano-calendário.
+* Solicitação e monitoramento automático de **downloads** de arquivos.
+* Geração de lote em arquivo **.ZIP** com todas as declarações baixadas.
 * Salvamento dos resultados no MongoDB.
-* Acompanhamento do andamento pela tela.
-* Filtro de resultados por status.
-* Exportação dos resultados para Excel.
+* Acompanhamento do andamento e progresso (X de Z) ao vivo pela tela.
+* Paginação de resultados e busca rápida (CNPJ, Código ou Nome).
+* Filtro de resultados por status em formato de menu suspenso.
+* Exportação do relatório final para Excel (.xlsx).
 
 ---
 
 ## Tecnologias utilizadas
 
-* Python
-* Flask
-* MongoDB
-* PyMongo
-* Requests
-* OpenPyXL
-* HTML
-* CSS
-* JavaScript
+* Python (Flask)
+* MongoDB (PyMongo)
+* Requests (Integração SOAP)
+* OpenPyXL (Leitura e gravação de Excel)
+* HTML5, CSS3 e Vanilla JavaScript
 
 ---
 
@@ -55,7 +57,9 @@ consulta_ecd/
 |-- services/
 |   |-- __init__.py
 |   |-- planilha.py
-|   `-- receitanetbx.py
+|   |-- receitanetbx.py
+|   |-- downloads_lote.py
+|   `-- downloads_receitanetbx.py
 |
 |-- templates/
 |   `-- index.html
@@ -66,7 +70,9 @@ consulta_ecd/
 |
 |-- uploads/
 |-- resultados/
+|-- zips/
 `-- logs/
+
 ```
 
 ---
@@ -75,9 +81,9 @@ consulta_ecd/
 
 Antes de rodar o sistema, é necessário ter:
 
-* Python 3.12 ou superior.
-* MongoDB rodando.
-* Endpoint do ReceitanetBX acessível pela máquina onde o sistema está rodando.
+1. **Python 3.12** ou superior.
+2. Banco de dados **MongoDB** rodando.
+3. **ReceitanetBX-Serviços (Receita Federal)** instalado e rodando em modo **Web Service** na **mesma máquina** que a aplicação. Por restrição de segurança da própria Receita Federal, a API bloqueia acessos externos via rede, aceitando apenas requisições via `localhost` (127.0.0.1).
 
 ---
 
@@ -87,6 +93,7 @@ Crie o ambiente virtual:
 
 ```bash
 python -m venv .venv
+
 ```
 
 Ative o ambiente virtual.
@@ -95,18 +102,21 @@ No Windows:
 
 ```bash
 .venv\Scripts\activate
+
 ```
 
 No Linux:
 
 ```bash
 source .venv/bin/activate
+
 ```
 
 Instale as dependências:
 
 ```bash
 pip install flask pymongo python-dotenv requests openpyxl
+
 ```
 
 ---
@@ -114,7 +124,7 @@ pip install flask pymongo python-dotenv requests openpyxl
 ## Configuração
 
 O sistema pode rodar sem arquivo `.env`, pois o `config.py` já possui valores padrão.
-Mesmo assim, é recomendado criar um arquivo `.env` na raiz do projeto para facilitar ajustes de ambiente, porta, MongoDB, endpoint do ReceitanetBX e pastas de arquivos.
+Mesmo assim, é recomendado criar um arquivo `.env` na raiz do projeto para configurar caminhos essenciais, como as pastas de download do ReceitanetBX.
 
 Exemplo de `.env`:
 
@@ -128,24 +138,15 @@ MONGO_DB=consulta_ecd
 
 RECEITANETBX_ENDPOINT=http://127.0.0.1:2443/services/ReceitanetBX
 
+# Pastas locais do sistema
 UPLOAD_DIR=uploads
 RESULT_DIR=resultados
-```
+ZIP_DIR=resultados/zips
 
-### Observação sobre o endpoint
+# Pastas de integração com o aplicativo ReceitanetBX
+RECEITANETBX_DOWNLOAD_DIR=C:\Arquivos_ReceitanetBX\Downloads
+RECEITANETBX_LOG_DIR=C:\Arquivos_ReceitanetBX\log
 
-Se o ReceitanetBX estiver na mesma máquina do sistema, pode ser usado:
-
-```env
-RECEITANETBX_ENDPOINT=http://127.0.0.1:2443/services/ReceitanetBX
-```
-
-Se estiver em outra máquina da rede, use o IP da máquina onde o serviço está disponível.
-
-Exemplo:
-
-```env
-RECEITANETBX_ENDPOINT=http://10.0.0.78:2443/services/ReceitanetBX
 ```
 
 ---
@@ -156,24 +157,14 @@ Com o ambiente virtual ativado, execute:
 
 ```bash
 python main.py
+
 ```
 
 Depois acesse no navegador:
 
 ```text
 http://localhost:6550
-```
 
-Ou, pela rede:
-
-```text
-http://IP_DO_SERVIDOR:6550
-```
-
-Exemplo:
-
-```text
-http://10.0.0.78:6550
 ```
 
 ---
@@ -182,39 +173,16 @@ http://10.0.0.78:6550
 
 A planilha precisa estar em formato `.xlsx`.
 
-A coluna obrigatória é:
-
-```text
-CNPJ
-```
+A coluna obrigatória é: `CNPJ`
 
 O sistema também tenta identificar automaticamente as colunas:
 
-| Informação   | Nomes aceitos                                                          |
-| ------------ | ---------------------------------------------------------------------- |
-| Código       | `codigo`, `cod`, `código`, `codigo dominio`, `cod dominio`, `codi_emp` |
-| Razão social | `razao social`, `razão social`, `empresa`, `nome`, `cliente`           |
+| Informação | Nomes aceitos |
+| --- | --- |
+| Código | `codigo`, `cod`, `código`, `codigo dominio`, `cod dominio`, `codi_emp` |
+| Razão social | `razao social`, `razão social`, `empresa`, `nome`, `cliente` |
 
-Exemplo de planilha:
-
-| Código | Razão Social         | CNPJ               |
-| -----: | -------------------- | ------------------ |
-|      3 | Empresa Exemplo LTDA | 06.872.037/0001-96 |
-|      9 | Outra Empresa LTDA   | 08.909.630/0001-95 |
-
-O sistema remove automaticamente pontos, barras e traços do CNPJ antes da consulta.
-
-Exemplo:
-
-```text
-06.872.037/0001-96
-```
-
-Será consultado como:
-
-```text
-06872037000196
-```
+A leitura ocorre estritamente na **primeira aba** (Worksheet) do arquivo importado. O sistema remove automaticamente pontos, barras e traços do CNPJ antes da consulta.
 
 ---
 
@@ -224,111 +192,57 @@ Será consultado como:
 
 Na tela `Nova Consulta`:
 
-1. Selecione a planilha `.xlsx`.
-2. Informe o ano-calendário.
-3. Clique em `Importar e iniciar consultas`.
+1. Envie a planilha `.xlsx`.
+2. Informe o **ano-calendário**.
+3. Selecione o **Tipo de Declaração** (`ECD` ou `ECF`).
+4. Marque a caixa se desejar que o sistema solicite e monitore os downloads automaticamente.
+5. Clique em `Importar e iniciar consultas`.
 
-O sistema vai importar a planilha, criar os registros no MongoDB e iniciar as consultas.
+O sistema vai importar a primeira aba da planilha, criar a fila no banco e iniciar o worker em segundo plano.
 
 ---
 
 ### 2. Acompanhar andamento
 
-Durante a execução, a tela mostra o resumo da consulta:
+Durante a execução, a tela "Nova Consulta" mostra o resumo ao vivo:
 
-* Pendentes
-* Consultando
-* Encontradas
-* Não encontradas
-* Erros
-
-Também é possível acompanhar a última mensagem de processamento e o último CNPJ consultado.
+* **Cards superiores:** Baixadas, Não encontradas, Erros.
+* **Live Box:** Mostra o progresso percentual (X de Z), último CNPJ processado, status atual e horário.
 
 ---
 
-### 3. Ver resultados
+### 3. Ver resultados e Exportar
 
 Na tela `Resultados`, o usuário pode:
 
-* visualizar os registros consultados;
-* filtrar por status;
-* reprocessar erros;
-* exportar o resultado para Excel.
+* Navegar pela tabela utilizando a **paginação** e a **barra de busca rápida** (CNPJ, nome ou código).
+* Filtrar os resultados por **status** clicando no ícone de funil no cabeçalho da tabela.
+* Fazer o download de um arquivo individual na coluna "Arquivo".
+* Clicar em **Baixar ZIP** para compilar todos os arquivos encontrados em um único pacote.
+* Clicar em **Exportar Excel** para baixar o relatório final da operação.
+* **Reprocessar erros:** Devolve consultas falhas para a fila (`PENDENTE`) e tenta novamente.
 
 ---
 
 ## Status possíveis
 
-| Status           | Significado                                     |
-| ---------------- | ----------------------------------------------- |
-| `PENDENTE`       | Registro importado e aguardando consulta.       |
-| `PROCESSANDO`    | Registro em consulta no momento.                |
-| `ENCONTRADO`     | A Receita retornou arquivo ECD para o CNPJ/ano. |
-| `NAO_ENCONTRADA` | Nenhum arquivo ECD foi encontrado.              |
-| `CNPJ_INVALIDO`  | O CNPJ da planilha não possui 14 dígitos.       |
-| `ERRO`           | Ocorreu erro na consulta ou no processamento.   |
+| Status | Significado |
+| --- | --- |
+| `PENDENTE` | Registro importado e aguardando consulta no topo da fila. |
+| `PROCESSANDO` | O sistema está se comunicando com o ReceitanetBX neste exato momento. |
+| `ENCONTRADO` | A declaração (ECD/ECF) foi encontrada, mas não foi solicitado download. |
+| `SOLICITADO` | Declaração encontrada e solicitação de download enviada com sucesso. |
+| `AGUARDANDO_DOWNLOAD` | Pedido registrado; o sistema está escaneando a pasta do ReceitanetBX. |
+| `BAIXADO` | O arquivo foi localizado com sucesso na pasta de downloads. |
+| `ARQUIVO_NAO_LOCALIZADO` | Esgotou o tempo limite e o arquivo físico não apareceu na pasta. |
+| `NAO_ENCONTRADA` | Nenhuma declaração (ECD/ECF) foi encontrada para o CNPJ e Ano. |
+| `CNPJ_INVALIDO` | O CNPJ da planilha não possui os 14 dígitos requeridos. |
+| `ERRO` / `ERRO_DOWNLOAD` | Ocorreu erro de sistema, timeout ou recusa do serviço SOAP. |
 
 ---
 
-## Exportação Excel
+## Logs e Arquivos Gerados
 
-A exportação gera uma planilha com os resultados da consulta.
-
-O arquivo contém informações como:
-
-* Código
-* Razão Social
-* CNPJ
-* Ano
-* Status
-* Mensagem retornada
-* Quantidade de arquivos encontrados
-* IDs dos arquivos
-* Tentativas
-* Data da consulta
-
----
-
-## Logs
-
-O sistema registra informações no terminal onde o `python main.py` está rodando.
-
-Também pode registrar logs na pasta:
-
-```text
-logs/
-```
-
-Os logs ajudam a verificar se a consulta está realmente sendo enviada para o ReceitanetBX e qual retorno foi recebido.
-
-
-## Comandos úteis
-
-Rodar o sistema:
-
-```bash
-python main.py
-```
-
-Verificar se a aplicação responde:
-
-```bash
-curl http://localhost:6550/api/status
-```
-
----
-
-## Observações
-
-Este sistema não utiliza automação visual ou robô de tela.
-
-A consulta é feita pelo backend, usando o endpoint configurado do ReceitanetBX.
-
-Para uso interno, o fluxo recomendado é:
-
-1. iniciar o MongoDB;
-2. iniciar o sistema com `python main.py`;
-3. acessar a tela no navegador;
-4. importar a planilha;
-5. acompanhar a consulta;
-6. exportar o Excel final.
+* O terminal da aplicação e o arquivo gerado em `logs/consulta_ecd.log` guardam os rastros detalhados de cada consulta e request SOAP.
+* A exportação em Excel gera um arquivo inteligente (`resultado_ecd...` ou `resultado_ecf...`) na pasta configurada de resultados.
+* O download em lote varre os registros de sucesso e cria um `.zip` com pastas separadas por cliente, evitando sobreposição de nomes.

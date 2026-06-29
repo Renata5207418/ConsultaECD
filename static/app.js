@@ -160,6 +160,16 @@ function atualizarResumo(resumo = {}) {
   setText("statNaoEncontrada", resumo.NAO_ENCONTRADA || 0);
   setText("statErro", (resumo.ERRO || 0) + (resumo.ERRO_DOWNLOAD || 0) + (resumo.CNPJ_INVALIDO || 0));
 
+  const finalizadas = Number(resumo.FINALIZADAS || 0);
+  const total = Number(resumo.TOTAL || 0);
+
+  if (total > 0) {
+    const porcentagem = Math.round((finalizadas / total) * 100);
+    setText("workerProgresso", `${finalizadas} de ${total} (${porcentagem}%)`);
+  } else {
+    setText("workerProgresso", "-");
+  }
+
   atualizarResumoDownloads();
 }
 
@@ -288,7 +298,6 @@ async function carregarConsultas() {
 function filtrarE_Renderizar() {
   const termo = (qs("#inputBusca")?.value || "").toLowerCase().trim();
 
-  // Função interna para limpar a string e facilitar a busca
   const limparTexto = (txt) => String(txt || "").replace(/[^\w\s]/gi, '').replace(/\s+/g, '').toLowerCase();
 
   const termoLimpo = limparTexto(termo);

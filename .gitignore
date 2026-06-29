@@ -14,3 +14,8 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+downloads_receitanetbx/
+apioriginal
+teste_ecf.py
+
